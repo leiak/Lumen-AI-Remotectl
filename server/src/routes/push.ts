@@ -13,8 +13,9 @@ export function pushRouter(db: Db, apiKey: string): Router {
 
   // Register a device for push notifications.
   // Body: { deviceToken: string, platform: 'ios' | 'android' }
-  // Upserts on the unique deviceToken so a re-registration updates lastSeenAt
-  // instead of failing the UNIQUE constraint.
+  // Uses an atomic ON CONFLICT upsert on the unique deviceToken so a
+  // re-registration updates lastSeenAt without racing against a concurrent
+  // insert.
   r.post('/devices', async (req, res) => {
     const { deviceToken, platform } = req.body as {
       deviceToken?: unknown;
@@ -30,25 +31,9 @@ export function pushRouter(db: Db, apiKey: string): Router {
     const plat = platform as Platform;
 
     const now = new Date();
+    const id = crypto.randomUUID();
 
     try {
-      // First, see if this token is already registered.
-      const existing = await db
-        .select()
-        .from(pushDevices)
-        .where(eq(pushDevices.deviceToken, deviceToken))
-        .get();
-
-      if (existing) {
-        await db
-          .update(pushDevices)
-          .set({ platform: plat, lastSeenAt: now })
-          .where(eq(pushDevices.id, existing.id))
-          .run();
-        return res.status(200).json({ ok: true, id: existing.id, updated: true });
-      }
-
-      const id = crypto.randomUUID();
       await db
         .insert(pushDevices)
         .values({
@@ -57,8 +42,12 @@ export function pushRouter(db: Db, apiKey: string): Router {
           platform: plat,
           lastSeenAt: now,
         })
+        .onConflictDoUpdate({
+          target: pushDevices.deviceToken,
+          set: { platform: plat, lastSeenAt: now },
+        })
         .run();
-      return res.status(201).json({ ok: true, id, created: true });
+      return res.status(200).json({ ok: true });
     } catch (e) {
       console.error('POST /api/push/devices failed:', e);
       return res.status(500).json({ error: 'internal' });

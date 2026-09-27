@@ -4,6 +4,7 @@ import { issues, runs, runEvents, comments } from '../db/schema.js';
 import { ClaudeAdapter, type ClaudeEvent } from '../adapter/claude.js';
 import { claimNextRun, finishRun } from './heartbeat.js';
 import type { RouteEvent } from '../events/translate.js';
+import type { NotifyKind, NotifyPayload } from '../push/notify.js';
 import crypto from 'node:crypto';
 
 export type RunResult =
@@ -17,6 +18,12 @@ export interface RunOnceOpts {
   issueId: string;
   adapter: ClaudeAdapter;
   broadcast: (msg: RouteEvent) => void;
+  /**
+   * Optional best-effort push notification hook. Wired in when the runner is
+   * hosted in the same process as `notify()`. Wrapped in try/catch by the
+   * caller so it never breaks the run flow.
+   */
+  notify?: (kind: NotifyKind, payload: NotifyPayload) => Promise<void>;
 }
 
 export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
@@ -79,6 +86,17 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
           return;
         }
         opts.broadcast({ kind: 'approval.requested', issueId: opts.issueId, commentId: cid });
+        if (opts.notify) {
+          try {
+            await opts.notify('approval_required', {
+              issueId: opts.issueId,
+              runId: opts.runId,
+              message: evt.question,
+            });
+          } catch (e) {
+            console.error('push notify failed', { kind: 'approval_required', runId: opts.runId, err: e });
+          }
+        }
         return;
       }
 
@@ -88,6 +106,17 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
     const error = e instanceof Error ? (e.stack ?? e.message) : String(e);
     await finishRun(opts.db, opts.runId, 'failed', error);
     opts.broadcast({ kind: 'run.finished', runId: opts.runId, issueId: opts.issueId, exit_code: -1 });
+    if (opts.notify) {
+      try {
+        await opts.notify('task_failed', {
+          issueId: opts.issueId,
+          runId: opts.runId,
+          message: 'run failed to start',
+        });
+      } catch (notifyErr) {
+        console.error('push notify failed', { kind: 'task_failed', runId: opts.runId, err: notifyErr });
+      }
+    }
     return { kind: 'spawnFailed', error };
   }
 
@@ -100,6 +129,17 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
 
   await finishRun(opts.db, opts.runId, exitCode === 0 ? 'done' : 'failed');
   opts.broadcast({ kind: 'run.finished', runId: opts.runId, issueId: opts.issueId, exit_code: exitCode });
+  if (opts.notify) {
+    try {
+      await opts.notify(exitCode === 0 ? 'task_done' : 'task_failed', {
+        issueId: opts.issueId,
+        runId: opts.runId,
+        message: exitCode === 0 ? 'run completed' : 'run failed',
+      });
+    } catch (notifyErr) {
+      console.error('push notify failed', { kind: exitCode === 0 ? 'task_done' : 'task_failed', runId: opts.runId, err: notifyErr });
+    }
+  }
 
   return { kind: 'ok', sessionId, exitCode };
 }
@@ -109,6 +149,12 @@ export interface StartLoopOpts {
   adapter: ClaudeAdapter;
   broadcast: (msg: RouteEvent) => void;
   intervalMs?: number;
+  /**
+   * Optional best-effort push notification hook forwarded to each `runOnce`.
+   * Wrapped in try/catch inside the runner so a failing notify never breaks
+   * the run flow.
+   */
+  notify?: (kind: NotifyKind, payload: NotifyPayload) => Promise<void>;
 }
 
 /**
@@ -132,6 +178,7 @@ export function startLoop(opts: StartLoopOpts): () => void {
         issueId: next.issueId,
         adapter: opts.adapter,
         broadcast: opts.broadcast,
+        notify: opts.notify,
       });
     } catch (e) {
       console.error('loop tick failed:', e);

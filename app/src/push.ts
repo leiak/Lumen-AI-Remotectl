@@ -27,7 +27,7 @@ export async function registerPush(): Promise<RegisterPushResult> {
     const capMod = await import('@capacitor/core');
     Capacitor = (capMod as any).Capacitor ?? capMod.default ?? capMod;
 
-    // @ts-ignore — `@capacitor/push-notifications` is an optional dependency.
+    // @ts-expect-error — `@capacitor/push-notifications` is an optional peer dep.
     // The try/catch below turns a missing package into a graceful error
     // result instead of crashing app startup.
     const pnMod = await import('@capacitor/push-notifications');
@@ -55,31 +55,35 @@ export async function registerPush(): Promise<RegisterPushResult> {
 
     await PushNotifications.register();
 
-    return await new Promise<RegisterPushResult>((resolve) => {
-      let settled = false;
-      const finish = (r: RegisterPushResult) => {
-        if (settled) return;
-        settled = true;
-        // Best-effort cleanup; if removeAllListeners isn't available we just
-        // leave listeners attached — the next register() call will overwrite.
-        try {
-          PushNotifications.removeAllListeners?.('registration');
-          PushNotifications.removeAllListeners?.('registrationError');
-        } catch {}
-        resolve(r);
-      };
-
-      try {
-        PushNotifications.addListener('registration', (t: { value: string }) => {
-          finish({ token: t.value, error: null });
+    // Race the registration listeners against a 10s timeout. Capacitor's
+    // `addListener` returns a `PluginListenerHandle` with `.remove()`, which
+    // we use to unsubscribe on first resolution — avoiding a dangling listener
+    // holding a reference to the promise.
+    const REGISTRATION_TIMEOUT_MS = 10_000;
+    const result = await Promise.race([
+      new Promise<RegisterPushResult>((resolve) => {
+        // `PushNotifications` is typed as `any` (optional peer dep), so the
+        // listener-handle types aren't statically known. Cast to `any` so the
+        // `.remove()` calls below type-check even when the mock plugin
+        // returns a different shape.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const off1: any = PushNotifications.addListener('registration', (t: { value: string }) => {
+          resolve({ token: t.value, error: null });
+          try { off1.remove(); } catch {}
+          try { off2.remove(); } catch {}
         });
-        PushNotifications.addListener('registrationError', (e: unknown) => {
-          finish({ token: null, error: String(e) });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const off2: any = PushNotifications.addListener('registrationError', (e: unknown) => {
+          resolve({ token: null, error: String(e) });
+          try { off1.remove(); } catch {}
+          try { off2.remove(); } catch {}
         });
-      } catch (e) {
-        finish({ token: null, error: e instanceof Error ? e.message : String(e) });
-      }
-    });
+      }),
+      new Promise<RegisterPushResult>((resolve) =>
+        setTimeout(() => resolve({ token: null, error: 'registration_timeout' }), REGISTRATION_TIMEOUT_MS),
+      ),
+    ]);
+    return result;
   } catch (e) {
     return { token: null, error: e instanceof Error ? e.message : String(e) };
   }

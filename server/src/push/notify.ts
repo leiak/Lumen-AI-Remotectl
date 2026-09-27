@@ -83,9 +83,7 @@ export async function notify(
           data: stringifyData(payload),
         });
       } else if (d.platform === 'ios') {
-        // TODO(iOS): implement APNs send via the `apn` package when needed.
-        // Intentionally a no-op for now — iOS users simply will not receive
-        // a push until APNs is wired up.
+        console.warn('push: iOS dispatch not implemented; skipping device', d.id);
       }
       // 'web' is not part of the schema enum today; if it ever is, add a
       // branch here for web push (e.g. via web-push / VAPID).

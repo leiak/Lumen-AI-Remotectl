@@ -47,9 +47,8 @@ describe('push routes', () => {
       .set('Authorization', `Bearer ${TOKEN}`)
       .send({ deviceToken: 'tok-android-1', platform: 'android' });
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    expect(typeof res.body.id).toBe('string');
 
     const rows = await ctx.db.select().from(pushDevices).all();
     expect(rows).toHaveLength(1);
@@ -63,7 +62,7 @@ describe('push routes', () => {
       .set('Authorization', `Bearer ${TOKEN}`)
       .send({ deviceToken: 'tok-ios-1', platform: 'ios' });
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
 
     const rows = await ctx.db.select().from(pushDevices).all();
@@ -72,19 +71,21 @@ describe('push routes', () => {
   });
 
   it('POST /api/push/devices re-registering an existing token updates lastSeenAt', async () => {
-    const first = await request(ctx.app)
-      .post('/api/push/devices')
-      .set('Authorization', `Bearer ${TOKEN}`)
-      .send({ deviceToken: 'tok-reuse', platform: 'android' });
-    expect(first.status).toBe(201);
-
-    const second = await request(ctx.app)
+    await request(ctx.app)
       .post('/api/push/devices')
       .set('Authorization', `Bearer ${TOKEN}`)
       .send({ deviceToken: 'tok-reuse', platform: 'android' });
 
-    expect(second.status).toBe(200);
-    expect(second.body.ok).toBe(true);
+    const first = (await ctx.db.select().from(pushDevices).all())[0]!;
+    // Ensure lastSeenAt is strictly later on the second registration.
+    await new Promise((r) => setTimeout(r, 5));
+    await request(ctx.app)
+      .post('/api/push/devices')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ deviceToken: 'tok-reuse', platform: 'android' });
+
+    const second = (await ctx.db.select().from(pushDevices).all())[0]!;
+    expect(second.lastSeenAt.getTime()).toBeGreaterThan(first.lastSeenAt.getTime());
 
     const rows = await ctx.db.select().from(pushDevices).all();
     expect(rows).toHaveLength(1);

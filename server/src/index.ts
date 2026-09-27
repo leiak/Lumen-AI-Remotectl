@@ -7,6 +7,7 @@ import { pushRouter } from './routes/push.js';
 import { BroadcastHub } from './ws/broadcast.js';
 import { createWsServer } from './ws/server.js';
 import { broadcastToWs, type RouteEvent } from './events/translate.js';
+import type { NotifyKind, NotifyPayload } from './push/notify.js';
 
 export interface CreateAppOpts {
   db: Db;
@@ -14,6 +15,13 @@ export interface CreateAppOpts {
   hub: BroadcastHub;
   httpPort: number;
   wsPort: number;
+  /**
+   * Optional best-effort push notification hook (e.g. `notify` from
+   * `./push/notify.js`). Today the runner isn't started inside `createApp`
+   * itself, but the option is plumbed so callers (or a future wiring) can
+   * forward it to `startLoop` from this same bootstrap.
+   */
+  notify?: (kind: NotifyKind, payload: NotifyPayload) => Promise<void>;
 }
 
 export interface AppHandle {
