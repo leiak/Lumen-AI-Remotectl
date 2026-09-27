@@ -4,6 +4,8 @@ import { useApi } from '../api/context';
 import { fmtError } from '../api/client';
 import type { Issue, Comment } from '../api/types';
 import { ApprovalCard } from '../components/ApprovalCard';
+import { WsClient } from '../ws';
+import { storage } from '../storage';
 
 export function IssueDetail() {
   const { id } = useParams<{ id: string }>();
@@ -42,6 +44,39 @@ export function IssueDetail() {
       .catch((e) => { if (!cancelled) setError(fmtError(e)); });
     return () => { cancelled = true; };
   }, [api, id]);
+
+  // Live updates via WebSocket. Filter on `issueId` so a user looking at
+  // Issue A doesn't see Issue B's status changes ripple through here.
+  useEffect(() => {
+    if (!id) return;
+    if (!storage.getHost() || !storage.getApiKey()) return;
+
+    const ws = new WsClient({ baseBackoffMs: 1000, maxBackoffMs: 30_000 });
+    const unsub = ws.onMessage((msg: any) => {
+      if (!msg || typeof msg !== 'object') return;
+      // Filter events for other issues when we have an `issueId` to filter on.
+      // `run_finished` does not currently carry `issueId` in the BroadcastEvent
+      // union (a server-side gap), so for that one event we can't filter and
+      // it will trigger a reload here — that's acceptable: run-finished is rare
+      // and false-positive reloads are cheaper than missing the actual finish.
+      if (typeof msg.issueId === 'string' && msg.issueId !== id) return;
+      switch (msg.type) {
+        case 'run_started':
+        case 'run_event':
+        case 'run_finished':
+        case 'approval_requested':
+        case 'approval_responded':
+          load();
+          break;
+      }
+    });
+    ws.connect();
+
+    return () => {
+      unsub();
+      ws.disconnect();
+    };
+  }, [id, load]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

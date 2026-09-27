@@ -1,14 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApi } from '../api/context';
 import { fmtError } from '../api/client';
 import type { Issue } from '../api/types';
+import { WsClient } from '../ws';
+import { storage } from '../storage';
 
 export function Inbox() {
   const api = useApi();
   const [issues, setIssues] = useState<Issue[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Refetch without resetting UI state — used by WS-driven reloads so the
+  // list doesn't flicker to a loading skeleton on every server tick.
+  const reload = useCallback(() => {
+    setError(null);
+    api.listIssues()
+      .then((data) => setIssues(data))
+      .catch((e) => setError(fmtError(e)));
+  }, [api]);
+
+  // Initial load — keeps the cancellation flag so an unmount mid-fetch
+  // doesn't try to write state to a dead component.
   useEffect(() => {
     let cancelled = false;
     setError(null);
@@ -17,6 +30,33 @@ export function Inbox() {
       .catch((e) => { if (!cancelled) setError(fmtError(e)); });
     return () => { cancelled = true; };
   }, [api]);
+
+  // Live updates via WebSocket. Any issue-level event means our list may be
+  // stale (status badges, ordering, new approvals). We deliberately don't
+  // subscribe to `run_event` here — those are stream-level and too noisy
+  // to refetch the whole inbox for.
+  useEffect(() => {
+    if (!storage.getHost() || !storage.getApiKey()) return;
+
+    const ws = new WsClient({ baseBackoffMs: 1000, maxBackoffMs: 30_000 });
+    const unsub = ws.onMessage((msg: any) => {
+      if (!msg || typeof msg !== 'object') return;
+      switch (msg.type) {
+        case 'issue_updated':
+        case 'run_started':
+        case 'run_finished':
+        case 'approval_requested':
+          reload();
+          break;
+      }
+    });
+    ws.connect();
+
+    return () => {
+      unsub();
+      ws.disconnect();
+    };
+  }, [reload]);
 
   if (error) return <div className="page inbox error">Error: {error}</div>;
   if (issues === null) return <div className="page inbox loading">Loading…</div>;
