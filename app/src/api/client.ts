@@ -39,7 +39,13 @@ export class ApiClient {
     if (!res.ok) {
       throw new ApiError(res.status, text || `${method} ${path} failed with ${res.status}`);
     }
-    return text ? (JSON.parse(text) as T) : (undefined as unknown as T);
+    let parsed: T;
+    try {
+      parsed = text ? (JSON.parse(text) as T) : (undefined as unknown as T);
+    } catch (e) {
+      throw new ApiError(res.status, `Invalid JSON in response: ${text.slice(0, 200)}`);
+    }
+    return parsed;
   }
 
   listIssues(): Promise<Issue[]> {

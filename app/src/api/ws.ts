@@ -9,6 +9,8 @@ export interface WsClientOpts {
   factory?: (url: string, protocols?: string | string[]) => WebSocketLike;
   backoffMs?: number;
   maxBackoffMs?: number;
+  maxRetries?: number;
+  onPermanentFailure?: (retries: number) => void;
 }
 
 export interface WebSocketLike {
@@ -24,6 +26,8 @@ export class WsClient {
   private factory: (url: string, protocols?: string | string[]) => WebSocketLike;
   private backoffMs: number;
   private maxBackoffMs: number;
+  private maxRetries: number;
+  private onPermanentFailure?: (retries: number) => void;
   private handlers = new Map<WsEventName, Set<WsHandler<WsEventName>>>();
   private ws: WebSocketLike | null = null;
   private stopped = false;
@@ -35,6 +39,12 @@ export class WsClient {
     this.apiKey = opts.apiKey;
     this.backoffMs = opts.backoffMs ?? 500;
     this.maxBackoffMs = opts.maxBackoffMs ?? 30_000;
+    // Cap reconnect attempts to protect mobile battery and avoid a thundering
+    // herd against the server when connectivity is persistently broken. After
+    // `maxRetries` failed attempts, we give up and notify the caller via
+    // `onPermanentFailure` (if provided) so the UI can prompt the user.
+    this.maxRetries = opts.maxRetries ?? 20;
+    this.onPermanentFailure = opts.onPermanentFailure;
     // Native browser WebSocket can't set custom headers. Until the server
     // accepts the auth token in a query string, we cannot authenticate a
     // browser WS upgrade at all. This client emits `?token=...` as the design
@@ -94,6 +104,13 @@ export class WsClient {
 
   private scheduleReconnect(): void {
     if (this.stopped) return;
+    if (this.retries >= this.maxRetries) {
+      // Give up after maxRetries failed attempts. Notify the caller so they
+      // can surface a "connection lost" UI instead of silently retrying
+      // forever (mobile battery / thundering herd concerns).
+      this.onPermanentFailure?.(this.retries);
+      return;
+    }
     const delay = Math.min(this.maxBackoffMs, this.backoffMs * Math.pow(2, this.retries));
     this.retries++;
     this.reconnectTimer = setTimeout(() => this.openSocket(), delay);
