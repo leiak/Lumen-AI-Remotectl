@@ -78,6 +78,71 @@ describe('WS server', () => {
     });
   });
 
+  it('accepts token via query string and receives broadcasts (browser fallback)', async () => {
+    const hub = new BroadcastHub();
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    cleanup = close;
+
+    // Browser clients cannot set custom HTTP headers, so the apiKey is passed
+    // via the query string. No Authorization header is sent.
+    const ws = await openAuthorizedQuery(port, TOKEN);
+
+    const received: string[] = [];
+    ws.on('message', (data) => received.push(data.toString()));
+
+    hub.broadcast({ type: 'issue_updated', issueId: 'i-q1', status: 'in_progress' });
+    hub.broadcast({ type: 'run_event', runId: 'r-q1', stream: 'stdout', content: 'hi' });
+
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (received.length >= 2) resolve();
+        else setImmediate(check);
+      };
+      check();
+    });
+
+    expect(received.some((m) => m.includes('issue_updated'))).toBe(true);
+    expect(received.some((m) => m.includes('run_event'))).toBe(true);
+    ws.close();
+  });
+
+  it('rejects connection with invalid token via query string', async () => {
+    const hub = new BroadcastHub();
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    cleanup = close;
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/?token=wrong-key`);
+      ws.on('error', () => resolve()); // 401 close fires the client error event
+      ws.on('open', () => reject(new Error('should not open with wrong query token')));
+    });
+  });
+
+  it('accepts token via query string when URL has a non-root path', async () => {
+    const hub = new BroadcastHub();
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    cleanup = close;
+
+    // Real browser clients request a path (e.g. /ws) plus a query string.
+    // Verify the URL parser handles that shape correctly.
+    const ws = await openAuthorizedQueryPath(port, '/ws', TOKEN);
+
+    const received: string[] = [];
+    ws.on('message', (data) => received.push(data.toString()));
+
+    hub.broadcast({ type: 'run_started', runId: 'r-q2', issueId: 'i-q2' });
+
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (received.length >= 1) resolve();
+        else setImmediate(check);
+      };
+      check();
+    });
+
+    expect(received[0]).toContain('run_started');
+    ws.close();
+  });
+
   it('accepts connection with valid token and receives broadcasts (deterministic)', async () => {
     const hub = new BroadcastHub();
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
@@ -191,6 +256,32 @@ function openAuthorized(port: number, token: string): Promise<WebSocket> {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    ws.once('error', (err) => reject(err));
+    ws.once('open', () => resolve(ws));
+  });
+}
+
+/**
+ * Helper: opens a WS connection authorized solely via the ?token=<apiKey>
+ * query string. Used to validate the browser fallback auth path.
+ */
+function openAuthorizedQuery(port: number, token: string): Promise<WebSocket> {
+  return new Promise<WebSocket>((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`);
+    ws.once('error', (err) => reject(err));
+    ws.once('open', () => resolve(ws));
+  });
+}
+
+/**
+ * Helper: opens a WS connection authorized via query string with a non-root
+ * path. Mimics the URL shape a browser would actually send.
+ */
+function openAuthorizedQueryPath(port: number, path: string, token: string): Promise<WebSocket> {
+  return new Promise<WebSocket>((resolve, reject) => {
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${port}${path}?token=${encodeURIComponent(token)}`,
+    );
     ws.once('error', (err) => reject(err));
     ws.once('open', () => resolve(ws));
   });

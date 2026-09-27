@@ -21,13 +21,31 @@ export async function createWsServer(opts: CreateWsServerOpts): Promise<WsServer
   const wss = new WebSocketServer({ noServer: true });
 
   http.on('upgrade', (req, socket, head) => {
+    // Token may come from either the Authorization: Bearer header (preferred,
+    // for non-browser clients) or the ?token=<apiKey> query string (required
+    // for browser WebSocket clients, which cannot set custom HTTP headers).
+    let token: string | null = null;
+
     const auth = req.headers['authorization'];
-    if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) {
+    if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+      token = auth.slice('Bearer '.length);
+    } else if (req.url) {
+      // Browser fallback: token carried in the query string.
+      try {
+        const url = new URL(req.url, 'http://localhost');
+        const qToken = url.searchParams.get('token');
+        if (qToken) token = qToken;
+      } catch {
+        // Malformed URL — leave token null and fall through to 401 below.
+      }
+    }
+
+    if (!token) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
-    const token = auth.slice('Bearer '.length);
+
     const a = Buffer.from(token);
     const b = Buffer.from(opts.apiKey);
     if (a.length !== b.length || !timingSafeEqual(a, b)) {
