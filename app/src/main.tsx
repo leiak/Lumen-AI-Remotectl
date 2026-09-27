@@ -2,12 +2,18 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
+import { ApiProvider } from './api/context';
+import { ApiClient } from './api/client';
 import './styles.css';
+
+const api = new ApiClient({ baseUrl: '/api', apiKey: 'placeholder' });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <ApiProvider client={api}>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </ApiProvider>
   </StrictMode>
 );

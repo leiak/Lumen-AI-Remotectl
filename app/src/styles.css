@@ -62,3 +62,114 @@ body, html, #root {
 main {
   flex: 1;
 }
+
+.issue-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.issue-item a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  text-decoration: none;
+  color: var(--fg);
+}
+
+.issue-item a:hover {
+  border-color: var(--accent);
+}
+
+.issue-item .title {
+  flex: 1;
+  font-weight: 500;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--border);
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.badge-todo, .badge-status-todo { background: #3a3f4b; }
+.badge-in_progress { background: #2c5d99; color: #fff; }
+.badge-in_review { background: #6b5b95; color: #fff; }
+.badge-done { background: #2c7a4a; color: #fff; }
+.badge-cancelled { background: #6e2a2a; color: #fff; }
+.badge-priority-high { background: #6e2a2a; color: #fff; }
+.badge-priority-medium { background: #6b5b35; color: #fff; }
+.badge-priority-low { background: #2f4f4f; color: #fff; }
+
+.issue-detail .meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.issue-detail .workspace {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.comments {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px 0;
+}
+
+.comment {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.comment .author {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.comment-user { border-left: 3px solid var(--accent); }
+.comment-assistant { border-left: 3px solid #6b5b95; }
+
+.comment-form textarea {
+  width: 100%;
+  background: var(--border);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.comment-form button {
+  margin-top: 8px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-weight: 500;
+}
+
+.comment-form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
