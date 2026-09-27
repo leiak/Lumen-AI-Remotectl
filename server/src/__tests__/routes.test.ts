@@ -82,4 +82,36 @@ describe('issues routes', () => {
     const res = await request(ctx.app).get(`/api/issues/${id}/comments`).set('Authorization', `Bearer ${TOKEN}`);
     expect(res.body.map((c: any) => c.body)).toEqual(['first', 'second']);
   });
+
+  it('GET /api/issues/:id returns 404 for unknown id', async () => {
+    const res = await request(ctx.app).get('/api/issues/does-not-exist').set('Authorization', `Bearer ${TOKEN}`);
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /api/issues/:id/comments returns 404 for unknown issue', async () => {
+    const res = await request(ctx.app)
+      .post('/api/issues/does-not-exist/comments')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ body: 'hi' });
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /api/issues/:id/comments returns 400 for missing body', async () => {
+    const issue = await request(ctx.app).post('/api/issues').set('Authorization', `Bearer ${TOKEN}`).send({ title: 'i', workspacePath: '/x' });
+    const res = await request(ctx.app)
+      .post(`/api/issues/${issue.body.id}/comments`)
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /api/issues persists priority', async () => {
+    const create = await request(ctx.app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'urgent', workspacePath: '/x', priority: 'high' });
+    expect(create.body.priority).toBe('high');
+    const get = await request(ctx.app).get(`/api/issues/${create.body.id}`).set('Authorization', `Bearer ${TOKEN}`);
+    expect(get.body.priority).toBe('high');
+  });
 });
