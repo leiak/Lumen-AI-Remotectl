@@ -15,7 +15,14 @@ describe('App', () => {
 
   it('navigates to settings when /settings route is matched', () => {
     render(<MemoryRouter initialEntries={['/settings']}><ApiProvider client={stubApi}><App /></ApiProvider></MemoryRouter>);
-    expect(screen.getByText(/Not connected/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Settings/i })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/http:\/\/100/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/sk-/i)).toBeInTheDocument();
+  });
+
+  it('navigates to stats when /stats route is matched', () => {
+    render(<MemoryRouter initialEntries={['/stats']}><ApiProvider client={stubApi}><App /></ApiProvider></MemoryRouter>);
+    expect(screen.getByRole('heading', { name: /Stats/i })).toBeInTheDocument();
   });
 
   it('renders Not Found for unknown routes', () => {

@@ -4,6 +4,7 @@ import { IssueDetail } from './pages/IssueDetail';
 import { LiveStream } from './pages/LiveStream';
 import { NewIssue } from './pages/NewIssue';
 import { Settings } from './pages/Settings';
+import { Stats } from './pages/Stats';
 
 export function App() {
   return (
@@ -13,6 +14,7 @@ export function App() {
         <nav>
           <Link to="/">Inbox</Link>
           <Link to="/new">New</Link>
+          <Link to="/stats">Stats</Link>
           <Link to="/settings">Settings</Link>
         </nav>
       </header>
@@ -22,6 +24,7 @@ export function App() {
           <Route path="/issues/:id?" element={<IssueDetail />} />
           <Route path="/issues/:id/stream" element={<LiveStream />} />
           <Route path="/new" element={<NewIssue />} />
+          <Route path="/stats" element={<Stats />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<div className="page"><h2>Not Found</h2><p>No such page.</p></div>} />
         </Routes>
