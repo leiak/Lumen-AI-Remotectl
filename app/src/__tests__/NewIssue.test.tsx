@@ -13,6 +13,7 @@ interface MockOpts {
   createdComment?: Comment;
   fetchedIssue?: Issue;
   failCreate?: { status: number; message: string };
+  failComment?: { status: number; message: string };
 }
 
 function mockApi(opts: MockOpts = {}) {
@@ -69,6 +70,12 @@ function mockApi(opts: MockOpts = {}) {
     const commentMatch = url.match(/\/api\/issues\/([^/]+)\/comments$/);
     if (commentMatch) {
       if (method === 'POST') {
+        if (opts.failComment) {
+          return new Response(JSON.stringify({ error: opts.failComment.message }), {
+            status: opts.failComment.status,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
         if (body && typeof body === 'object') {
           const b = body as { body?: string };
           if (b.body) storedComment.body = b.body;
@@ -179,10 +186,10 @@ describe('NewIssue page', () => {
     const createCall = calls.find((c) => c.url === 'http://x/api/issues' && c.method === 'POST');
     expect(createCall).toBeDefined();
     expect(createCall!.body).toEqual({ title: 'do thing', workspacePath: '/repo', priority: 'medium' });
-    // startImmediately defaulted to true => addComment was called too
+    // startImmediately defaulted to true => addComment was called too, with the kickoff prompt body.
     const commentCall = calls.find((c) => c.url === 'http://x/api/issues/i-new/comments' && c.method === 'POST');
     expect(commentCall).toBeDefined();
-    expect(commentCall!.body).toEqual({ body: 'do thing' });
+    expect(commentCall!.body).toEqual({ body: 'Please begin work on: do thing' });
   });
 
   it('skips addComment when startImmediately is unchecked', async () => {
@@ -215,7 +222,7 @@ describe('NewIssue page', () => {
   });
 
   it('shows an inline error and keeps the form when createIssue fails', async () => {
-    const { client } = mockApi({ failCreate: { status: 500, message: 'server down' } });
+    const { client, calls } = mockApi({ failCreate: { status: 500, message: 'server down' } });
     renderNewIssue(client);
     fireEvent.change(titleInput(), { target: { value: 'task' } });
     fireEvent.change(workspaceInput(), { target: { value: '/repo' } });
@@ -225,5 +232,44 @@ describe('NewIssue page', () => {
     });
     // Still on /new (not navigated)
     expect(screen.getByRole('heading', { name: /new issue/i })).toBeInTheDocument();
+    // Form values preserved
+    expect((titleInput() as HTMLInputElement).value).toBe('task');
+    expect((workspaceInput() as HTMLInputElement).value).toBe('/repo');
+    // Button re-enabled — not stuck in "Creating..." state
+    const btn = createButton() as HTMLButtonElement;
+    expect(btn).not.toBeDisabled();
+    expect(btn.textContent).toBe('Create');
+    // No addComment was attempted (createIssue itself failed)
+    const commentCalls = calls.filter((c) => c.url === 'http://x/api/issues/i-new/comments' && c.method === 'POST');
+    expect(commentCalls).toHaveLength(0);
+  });
+
+  it('navigates to the issue even when addComment fails after createIssue succeeds', async () => {
+    // Silence the expected console.error from the swallowed addComment failure.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { client, calls } = mockApi({ failComment: { status: 500, message: 'comment failed' } });
+      renderNewIssue(client);
+      fireEvent.change(titleInput(), { target: { value: 'do thing' } });
+      fireEvent.change(workspaceInput(), { target: { value: '/repo' } });
+      fireEvent.click(createButton());
+
+      // The issue was created — the user should land on its detail page even if
+      // the follow-up comment failed.
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: 'do thing' })).toBeInTheDocument();
+      });
+      // createIssue WAS called
+      const createCall = calls.find((c) => c.url === 'http://x/api/issues' && c.method === 'POST');
+      expect(createCall).toBeDefined();
+      // addComment WAS attempted (and failed); we can't await the fire-and-forget
+      // cleanly, but we can check it was issued.
+      await waitFor(() => {
+        const commentCalls = calls.filter((c) => c.url === 'http://x/api/issues/i-new/comments' && c.method === 'POST');
+        expect(commentCalls).toHaveLength(1);
+      });
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
