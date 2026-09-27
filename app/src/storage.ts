@@ -1,6 +1,7 @@
 const HOST_KEY = 'remotectl.host';
 const API_KEY = 'remotectl.apiKey';
 const LAST_EVENT_ID = 'remotectl.lastEventId';
+const WORKSPACE_DEFAULT = 'remotectl.workspaceDefault';
 
 function safeGet(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -32,9 +33,16 @@ export const storage = {
   setLastEventId(id: number): void {
     safeSet(LAST_EVENT_ID, String(id));
   },
+  getWorkspaceDefault(): string | null {
+    return safeGet(WORKSPACE_DEFAULT);
+  },
+  setWorkspaceDefault(path: string): void {
+    safeSet(WORKSPACE_DEFAULT, path);
+  },
   clear(): void {
     safeRemove(HOST_KEY);
     safeRemove(API_KEY);
     safeRemove(LAST_EVENT_ID);
+    safeRemove(WORKSPACE_DEFAULT);
   },
 };

@@ -27,4 +27,10 @@ describe('App', () => {
     render(<MemoryRouter initialEntries={['/issues/']}><ApiProvider client={stubApi}><App /></ApiProvider></MemoryRouter>);
     expect(screen.getByText(/Missing id/i)).toBeInTheDocument();
   });
+
+  it('renders the New Issue page at /new', () => {
+    render(<MemoryRouter initialEntries={['/new']}><ApiProvider client={stubApi}><App /></ApiProvider></MemoryRouter>);
+    expect(screen.getByRole('heading', { name: /new issue/i })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/What needs doing/i)).toBeInTheDocument();
+  });
 });
