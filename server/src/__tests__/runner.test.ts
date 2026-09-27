@@ -243,6 +243,71 @@ describe('runOnce', () => {
     expect(contentRows[1].name).toBe('Bash');
     expect(contentRows[2].content).toBe('three');
   });
+
+  it('persists approval_request event as a comment and broadcasts approval.requested', async () => {
+    const issueId = crypto.randomUUID();
+    await db.insert(issues).values({
+      id: issueId, title: 'do thing', status: 'todo', priority: 'medium',
+      workspacePath: os.tmpdir(), createdAt: new Date(), updatedAt: new Date(),
+    }).run();
+
+    const question = 'Allow Bash to run `rm -rf /`?';
+    await runOnce({
+      db,
+      runId: crypto.randomUUID(),
+      issueId,
+      adapter: makeFakeAdapter([
+        { type: 'session_start', session_id: 's-ap' },
+        { type: 'approval_request', question },
+        { type: 'session_end', exit_code: 0 },
+      ]) as any,
+      broadcast: bc,
+    });
+
+    // Wait a tick for the fire-and-forget comment insert to settle.
+    await new Promise((r) => setTimeout(r, 50));
+
+    const cs = await db.select().from(comments).where(eq(comments.issueId, issueId)).all();
+    const approval = cs.find((c) => c.kind === 'approval_request');
+    expect(approval).toBeDefined();
+    expect(approval!.authorType).toBe('agent');
+    expect(approval!.body).toBe(question);
+    expect(typeof approval!.id).toBe('string');
+
+    const req = broadcasted.find((b) => b.kind === 'approval.requested');
+    expect(req).toBeDefined();
+    expect(req.issueId).toBe(issueId);
+    expect(req.commentId).toBe(approval!.id);
+
+    // The approval_request event should NOT be wrapped as a run.event.
+    expect(broadcasted.some((b) => b.kind === 'run.event' &&
+      (b.event as any)?.type === 'approval_request')).toBe(false);
+  });
+
+  it('does not broadcast approval.requested when no approval_request event arrives', async () => {
+    const issueId = crypto.randomUUID();
+    await db.insert(issues).values({
+      id: issueId, title: 'do thing', status: 'todo', priority: 'medium',
+      workspacePath: os.tmpdir(), createdAt: new Date(), updatedAt: new Date(),
+    }).run();
+
+    await runOnce({
+      db,
+      runId: crypto.randomUUID(),
+      issueId,
+      adapter: makeFakeAdapter([
+        { type: 'session_start', session_id: 's-norun' },
+        { type: 'assistant_text', content: 'hi' },
+        { type: 'session_end', exit_code: 0 },
+      ]) as any,
+      broadcast: bc,
+    });
+
+    expect(broadcasted.some((b) => b.kind === 'approval.requested')).toBe(false);
+
+    const cs = await db.select().from(comments).where(eq(comments.issueId, issueId)).all();
+    expect(cs.filter((c) => c.kind === 'approval_request')).toHaveLength(0);
+  });
 });
 
 function makeFakeAdapter(events: any[]) {

@@ -6,7 +6,9 @@ export type BroadcastEvent =
   | { type: 'run_started'; runId: string; issueId: string }
   | { type: 'run_event'; runId: string; issueId: string; stream: 'stdout' | 'stderr'; content: string }
   | { type: 'run_finished'; runId: string; status: 'done' | 'failed' | 'cancelled'; error?: string }
-  | { type: 'approval_required'; runId: string; issueId: string; question: string };
+  | { type: 'approval_required'; runId: string; issueId: string; question: string }
+  | { type: 'approval_requested'; issueId: string; commentId: string }
+  | { type: 'approval_responded'; issueId: string; value: string };
 
 export class BroadcastHub {
   private sockets = new Set<WebSocket>();

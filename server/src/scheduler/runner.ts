@@ -4,6 +4,7 @@ import { issues, runs, runEvents, comments } from '../db/schema.js';
 import { ClaudeAdapter, type ClaudeEvent } from '../adapter/claude.js';
 import { claimNextRun, finishRun } from './heartbeat.js';
 import type { RouteEvent } from '../events/translate.js';
+import crypto from 'node:crypto';
 
 export type RunResult =
   | { kind: 'ok'; sessionId: string | null; exitCode: number }
@@ -51,7 +52,6 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
       ? { resume: issue.currentSessionId, prompt }
       : { fresh: true, prompt };
     handle = opts.adapter.start(adapterOpts, (evt: ClaudeEvent) => {
-      opts.broadcast({ kind: 'run.event', runId: opts.runId, issueId: opts.issueId, event: evt });
       // Persist to run_events (fire and forget — don't block event delivery)
       opts.db.insert(runEvents).values({
         runId: opts.runId,
@@ -59,6 +59,23 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
         content: JSON.stringify(evt),
         createdAt: new Date(),
       }).run().catch((e) => console.error('runEvents insert failed:', e));
+
+      if (evt.type === 'approval_request') {
+        const cid = crypto.randomUUID();
+        // Persist as agent comment so the user can see it on the IssueDetail page
+        opts.db.insert(comments).values({
+          id: cid,
+          issueId: opts.issueId,
+          authorType: 'agent',
+          body: evt.question,
+          kind: 'approval_request',
+          createdAt: new Date(),
+        }).run().catch((e) => console.error('comments insert failed:', e));
+        opts.broadcast({ kind: 'approval.requested', issueId: opts.issueId, commentId: cid });
+        return;
+      }
+
+      opts.broadcast({ kind: 'run.event', runId: opts.runId, issueId: opts.issueId, event: evt });
     });
   } catch (e) {
     const error = e instanceof Error ? (e.stack ?? e.message) : String(e);

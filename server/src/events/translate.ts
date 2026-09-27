@@ -9,7 +9,9 @@ export type RouteEvent =
   | { kind: 'run.queued'; issueId: string; runId: string }
   | { kind: 'run.started'; runId: string; issueId: string }
   | { kind: 'run.event'; runId: string; issueId: string; event: unknown }
-  | { kind: 'run.finished'; runId: string; issueId: string; exit_code: number };
+  | { kind: 'run.finished'; runId: string; issueId: string; exit_code: number }
+  | { kind: 'approval.requested'; issueId: string; commentId: string }
+  | { kind: 'approval.responded'; issueId: string; value: string };
 
 /**
  * Translate a route-layer event into the WS-layer event shape and fan it out
@@ -38,6 +40,12 @@ export function broadcastToWs(hub: BroadcastHub, msg: RouteEvent): void {
         runId: msg.runId,
         status: msg.exit_code === 0 ? 'done' : 'failed',
       });
+      return;
+    case 'approval.requested':
+      hub.broadcast({ type: 'approval_requested', issueId: msg.issueId, commentId: msg.commentId });
+      return;
+    case 'approval.responded':
+      hub.broadcast({ type: 'approval_responded', issueId: msg.issueId, value: msg.value });
       return;
   }
 }
