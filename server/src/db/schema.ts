@@ -51,9 +51,7 @@ export const pushDevices = sqliteTable('push_devices', {
 });
 
 export const settings = sqliteTable('settings', {
-  id: integer('id').primaryKey(),
-  tailscaleIp: text('tailscale_ip'),
-  apiKeyHash: text('api_key_hash').notNull(),
-  workspaceDefault: text('workspace_default').notNull(),
-  pushEnabled: integer('push_enabled', { mode: 'boolean' }).notNull().default(true),
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }),
 });

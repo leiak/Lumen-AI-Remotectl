@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./db/client": "./dist/db/client.js",
+    "./db/migrate": "./dist/db/migrate.js",
+    "./db/schema": "./dist/db/schema.js",
+    "./auth": "./dist/auth.js",
+    "./ws/broadcast": "./dist/ws/broadcast.js"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

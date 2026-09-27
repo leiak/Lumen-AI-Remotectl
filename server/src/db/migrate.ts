@@ -58,10 +58,8 @@ export async function migrate(db: Db) {
   )`);
 
   await db.run(`CREATE TABLE IF NOT EXISTS settings (
-    id INTEGER PRIMARY KEY,
-    tailscale_ip TEXT,
-    api_key_hash TEXT NOT NULL,
-    workspace_default TEXT NOT NULL,
-    push_enabled INTEGER NOT NULL DEFAULT 1
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER
   )`);
 }
