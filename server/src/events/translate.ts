@@ -7,6 +7,7 @@ import type { BroadcastHub } from '../ws/broadcast.js';
  */
 export type RouteEvent =
   | { kind: 'run.queued'; issueId: string; runId: string }
+  | { kind: 'run.started'; runId: string; issueId: string }
   | { kind: 'run.event'; runId: string; issue_id: string; event: unknown }
   | { kind: 'run.finished'; runId: string; issue_id: string; exit_code: number };
 
@@ -17,6 +18,9 @@ export type RouteEvent =
 export function broadcastToWs(hub: BroadcastHub, msg: RouteEvent): void {
   switch (msg.kind) {
     case 'run.queued':
+      hub.broadcast({ type: 'run_started', runId: msg.runId, issueId: msg.issueId });
+      return;
+    case 'run.started':
       hub.broadcast({ type: 'run_started', runId: msg.runId, issueId: msg.issueId });
       return;
     case 'run.event':
