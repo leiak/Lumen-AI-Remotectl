@@ -78,4 +78,35 @@ describe('db', () => {
     expect(rows.map(r => r.content)).toEqual(['line 1', 'line 2', 'line 3']);
     expect(rows[0].id).toBeLessThan(rows[1].id);
   });
+
+  it('cascade deletes comments, runs, and run_events when issue is deleted', async () => {
+    const issueId = crypto.randomUUID();
+    await db.insert(issues).values({
+      id: issueId, title: 't', status: 'todo', priority: 'low',
+      workspacePath: '/x', createdAt: new Date(), updatedAt: new Date(),
+    }).run();
+    const runId = crypto.randomUUID();
+    await db.insert(runs).values({ id: runId, issueId, status: 'running', trigger: 'manual' }).run();
+    await db.insert(comments).values({
+      id: crypto.randomUUID(), issueId, authorType: 'user', body: 'c', kind: 'message', createdAt: new Date(),
+    }).run();
+    await db.insert(runEvents).values({ runId, stream: 'stdout', content: 'e', createdAt: new Date() }).run();
+
+    await db.delete(issues).where(eq(issues.id, issueId)).run();
+
+    expect(await db.select().from(comments).where(eq(comments.issueId, issueId)).all()).toHaveLength(0);
+    expect(await db.select().from(runs).where(eq(runs.issueId, issueId)).all()).toHaveLength(0);
+    expect(await db.select().from(runEvents).where(eq(runEvents.runId, runId)).all()).toHaveLength(0);
+  });
+
+  it('migrate is idempotent (safe to call twice)', async () => {
+    await migrate(db); // call again — should not throw
+    const id = crypto.randomUUID();
+    await db.insert(issues).values({
+      id, title: 'after second migrate', status: 'todo', priority: 'low',
+      workspacePath: '/x', createdAt: new Date(), updatedAt: new Date(),
+    }).run();
+    const rows = await db.select().from(issues).where(eq(issues.id, id)).all();
+    expect(rows).toHaveLength(1);
+  });
 });
