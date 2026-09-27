@@ -85,25 +85,45 @@ describe('Stats page', () => {
     await waitFor(() => expect(screen.getByText(/Error/i)).toBeInTheDocument());
   });
 
-  it('refreshes when the Refresh button is clicked', async () => {
+  it('refreshes when the Refresh button is clicked and the new data renders', async () => {
+    // First load returns 1 issue; Refresh returns 2. Verifies that the new
+    // total actually renders (not just that fetch was called again).
     let calls = 0;
     const fetchMock = vi.fn(async (url: string) => {
       if (url.endsWith('/api/issues')) {
         calls += 1;
-        const issues = [
-          { id: `i-${calls}`, title: `t${calls}`, status: 'todo', priority: 'low', workspacePath: '/x', createdAt: '', updatedAt: '' },
-        ];
-        return new Response(JSON.stringify(issues), { status: 200, headers: { 'content-type': 'application/json' } });
+        if (calls === 1) {
+          return new Response(JSON.stringify([
+            { id: 'i-1', title: 't1', status: 'todo', priority: 'low', workspacePath: '/x', createdAt: '', updatedAt: '' },
+          ]), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+        return new Response(JSON.stringify([
+          { id: 'i-a', title: 'tA', status: 'todo', priority: 'low', workspacePath: '/x', createdAt: '', updatedAt: '' },
+          { id: 'i-b', title: 'tB', status: 'done', priority: 'low', workspacePath: '/x', createdAt: '', updatedAt: '' },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       return new Response('', { status: 404 });
     });
     const api = new ApiClient({ baseUrl: 'http://x', apiKey: 'sk-test', fetch: fetchMock as any });
 
     render(<MemoryRouter><ApiProvider client={api}><Stats /></ApiProvider></MemoryRouter>);
-    await waitFor(() => expect(screen.getByText(/Refresh/i)).toBeInTheDocument());
+
+    // Wait for the first response to render (total = 1).
+    await waitFor(() => {
+      const totalEl = document.querySelector('.stats-total-value');
+      expect(totalEl?.textContent).toBe('1');
+    });
 
     const initialCalls = calls;
     fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+
+    // The second fetch was issued.
     await waitFor(() => expect(calls).toBeGreaterThan(initialCalls));
+    // And the new total (2) actually rendered — verifying the new data
+    // reached the DOM (not just that fetch was called).
+    await waitFor(() => {
+      const totalEl = document.querySelector('.stats-total-value');
+      expect(totalEl?.textContent).toBe('2');
+    });
   });
 });

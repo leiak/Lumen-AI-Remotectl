@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../api/context';
 import { fmtError } from '../api/client';
 import type { Issue, IssueStatus as IssueStatusT } from '../api/types';
@@ -23,19 +23,30 @@ export function Stats() {
   const api = useApi();
   const [issues, setIssues] = useState<Issue[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Track the most recent load and whether the component is still mounted so
+  // that out-of-order responses from rapid Refresh clicks don't overwrite
+  // newer data with stale data.
+  const epochRef = useRef(0);
+  const cancelledRef = useRef(false);
 
-  const load = useCallback(() => {
-    let cancelled = false;
+  const load = useCallback(async () => {
+    const myEpoch = ++epochRef.current;
     setError(null);
-    api.listIssues()
-      .then((data) => { if (!cancelled) setIssues(data); })
-      .catch((e) => { if (!cancelled) { setIssues(null); setError(fmtError(e)); } });
-    return () => { cancelled = true; };
+    try {
+      const data = await api.listIssues();
+      if (cancelledRef.current || myEpoch !== epochRef.current) return;
+      setIssues(data);
+    } catch (e) {
+      if (cancelledRef.current || myEpoch !== epochRef.current) return;
+      setIssues(null);
+      setError(fmtError(e));
+    }
   }, [api]);
 
   useEffect(() => {
-    const cleanup = load();
-    return cleanup;
+    cancelledRef.current = false;
+    load();
+    return () => { cancelledRef.current = true; };
   }, [load]);
 
   const counts: StatusCounts = (() => {

@@ -1,8 +1,9 @@
 import type { Issue, Comment } from './types';
+import { storage } from '../storage';
 
 export interface ApiClientOpts {
-  baseUrl: string;
-  apiKey: string;
+  baseUrl?: string;
+  apiKey?: string;
   fetch?: typeof fetch;
 }
 
@@ -21,23 +22,49 @@ export function fmtError(e: unknown): string {
   return String(e);
 }
 
+/**
+ * Resolve the base URL on every request so Settings edits to storage take
+ * effect immediately — the live ApiClient always sees the user's current
+ * server host. Throws a clear ApiError if no host is configured.
+ * The host is the server origin (e.g. http://100.x.x.x:3100); method paths
+ * already include the /api prefix (e.g. /api/issues).
+ */
+function resolveBaseUrl(fallback?: string): string {
+  const host = storage.getHost() ?? fallback;
+  if (!host) throw new ApiError(0, 'no_host_configured');
+  return host.replace(/\/$/, '');
+}
+
+/**
+ * Resolve the API key on every request for the same reason as resolveBaseUrl.
+ * Throws a clear ApiError if no api key is configured.
+ */
+function resolveApiKey(fallback?: string): string {
+  const key = storage.getApiKey() ?? fallback;
+  if (!key) throw new ApiError(0, 'no_api_key_configured');
+  return key;
+}
+
 export class ApiClient {
-  private baseUrl: string;
-  private apiKey: string;
+  // Constructor-time defaults. Used only when storage does not have a value
+  // (e.g. unit tests that don't exercise the storage layer).
+  private defaultBaseUrl?: string;
+  private defaultApiKey?: string;
   private fetch: typeof fetch;
 
-  constructor(opts: ApiClientOpts) {
-    this.baseUrl = opts.baseUrl.replace(/\/$/, '');
-    this.apiKey = opts.apiKey;
+  constructor(opts: ApiClientOpts = {}) {
+    if (opts.baseUrl !== undefined) this.defaultBaseUrl = opts.baseUrl;
+    if (opts.apiKey !== undefined) this.defaultApiKey = opts.apiKey;
     this.fetch = opts.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
+    const url = resolveBaseUrl(this.defaultBaseUrl) + path;
+    const apiKey = resolveApiKey(this.defaultApiKey);
     const init: RequestInit = {
       method,
       headers: {
-        'authorization': `Bearer ${this.apiKey}`,
+        'authorization': `Bearer ${apiKey}`,
         'content-type': 'application/json',
       },
     };

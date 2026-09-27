@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../api/context';
 import { fmtError } from '../api/client';
 import { storage } from '../storage';
@@ -11,6 +11,9 @@ export function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  // Track the "Saved" indicator timer so rapid Save clicks don't leave dangling
+  // timers, and unmount clears the in-flight timer.
+  const savedTimerRef = useRef<number | null>(null);
 
   function onSave(e: React.FormEvent) {
     e.preventDefault();
@@ -20,8 +23,23 @@ export function Settings() {
     storage.setApiKey(apiKey.trim());
     setSaved(true);
     // Hide the saved indicator after a short delay so the UI doesn't feel sticky.
-    window.setTimeout(() => setSaved(false), 2000);
+    if (savedTimerRef.current !== null) {
+      window.clearTimeout(savedTimerRef.current);
+    }
+    savedTimerRef.current = window.setTimeout(() => {
+      setSaved(false);
+      savedTimerRef.current = null;
+    }, 2000);
   }
+
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current !== null) {
+        window.clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = null;
+      }
+    };
+  }, []);
 
   async function onTest() {
     setError(null);

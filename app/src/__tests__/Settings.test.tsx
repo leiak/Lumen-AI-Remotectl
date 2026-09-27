@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ApiProvider } from '../api/context';
@@ -28,6 +28,11 @@ beforeEach(() => {
   listIssuesSpy.mockReset();
   // Default: a successful empty list — keeps "Test connection" paths deterministic.
   listIssuesSpy.mockResolvedValue([]);
+});
+
+afterEach(() => {
+  // Restore any spies installed with vi.spyOn so they don't leak across tests.
+  vi.restoreAllMocks();
 });
 
 describe('Settings page', () => {
