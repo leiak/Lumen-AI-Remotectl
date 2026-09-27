@@ -1,5 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 
+// DoS guard: lines larger than this are treated as a protocol violation.
+// A malicious/compromised binary emitting huge lines could otherwise blow up memory.
+const MAX_LINE_BYTES = 1024 * 1024;
+
 export type ClaudeEvent =
   | { type: 'session_start'; session_id: string }
   | { type: 'session_end'; exit_code: number }
@@ -30,12 +34,23 @@ export class ClaudeAdapter {
   constructor(private cfg: ClaudeConfig) {}
 
   start(opts: ClaudeStartOpts, onEvent: (e: ClaudeEvent) => void): ClaudeHandle {
+    // Guard against user-supplied continuation prompts being parsed as flags.
+    if (opts.prompt && opts.prompt.startsWith('--')) {
+      throw new Error('prompt_cannot_start_with_dashes');
+    }
+
     const args = [...this.cfg.baseArgs];
     if (opts.resume) args.push('--resume', opts.resume);
     if (opts.prompt) args.push(opts.prompt);
     args.push('--cwd', this.cfg.workspacePath);
 
     const proc: ChildProcess = spawn(this.cfg.binary, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    // If spawn itself fails (ENOENT, EACCES, etc.), Node never emits 'exit',
+    // so done would hang forever. Resolve with -1 to surface the failure.
+    proc.on('error', () => {
+      resolveDone({ sessionId: null, exitCode: -1 });
+    });
 
     let buf = '';
     let sessionId: string | null = null;
@@ -47,6 +62,12 @@ export class ClaudeAdapter {
 
     const handleLine = (line: string) => {
       if (!line.trim()) return;
+      // Byte-length cap on lines to prevent OOM from huge stdout.
+      if (Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES) {
+        onEvent({ type: 'error', message: 'line_too_long' });
+        proc.kill();
+        return;
+      }
       try {
         const evt = JSON.parse(line) as ClaudeEvent;
         if (evt.type === 'session_start') sessionId = evt.session_id;
@@ -69,7 +90,8 @@ export class ClaudeAdapter {
     });
 
     proc.on('exit', (code) => {
-      resolveDone({ sessionId, exitCode: code ?? 0 });
+      // code is null when the process was killed by a signal (e.g. line_too_long).
+      resolveDone({ sessionId, exitCode: code ?? -1 });
     });
 
     return {
