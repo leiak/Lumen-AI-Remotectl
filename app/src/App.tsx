@@ -16,8 +16,9 @@ export function App() {
       <main>
         <Routes>
           <Route path="/" element={<Inbox />} />
-          <Route path="/issues/:id" element={<IssueDetail />} />
+          <Route path="/issues/:id?" element={<IssueDetail />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="*" element={<div className="page"><h2>Not Found</h2><p>No such page.</p></div>} />
         </Routes>
       </main>
     </div>

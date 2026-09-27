@@ -14,4 +14,14 @@ describe('App', () => {
     render(<MemoryRouter initialEntries={['/settings']}><App /></MemoryRouter>);
     expect(screen.getByText(/Not connected/i)).toBeInTheDocument();
   });
+
+  it('renders Not Found for unknown routes', () => {
+    render(<MemoryRouter initialEntries={['/unknown-path']}><App /></MemoryRouter>);
+    expect(screen.getByText(/Not Found/i)).toBeInTheDocument();
+  });
+
+  it('renders Missing id when /issues/ has no id', () => {
+    render(<MemoryRouter initialEntries={['/issues/']}><App /></MemoryRouter>);
+    expect(screen.getByText(/Missing id/i)).toBeInTheDocument();
+  });
 });
