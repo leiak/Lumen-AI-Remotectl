@@ -46,6 +46,9 @@ export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: RouteEven
     const { body } = req.body as { body?: unknown };
     if (typeof body !== 'string' || !body) return res.status(400).json({ error: 'body_required_string' });
 
+    const isApprovalReply = body === 'yes' || body === 'no';
+    const kind: 'message' | 'approval_response' = isApprovalReply ? 'approval_response' : 'message';
+
     try {
       const result = await db.transaction(async (tx) => {
         const issue = await tx.select().from(issues).where(eq(issues.id, req.params.id)).get();
@@ -59,9 +62,14 @@ export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: RouteEven
         const now = new Date();
         await tx.insert(comments).values({
           id, issueId: req.params.id,
-          authorType: 'user', body, kind: 'message',
+          authorType: 'user', body, kind,
           createdAt: now,
         }).run();
+
+        // Approval replies resume the existing claude run; they do NOT spawn a new run.
+        if (isApprovalReply) {
+          return { kind: 'ok' as const, commentId: id, runId: null };
+        }
 
         const runId = crypto.randomUUID();
         await tx.insert(runs).values({
@@ -85,14 +93,18 @@ export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: RouteEven
       if (result.kind === 'invalid_status') return res.status(409).json({ error: 'issue_terminal', status: 'cancelled_or_done' });
 
       // Broadcast (best-effort). A failure here must not break the response — the
-      // comment + run are already committed by the transaction.
+      // comment + (optional) run are already committed by the transaction.
       try {
-        broadcast?.({ kind: 'run.queued', issueId: req.params.id, runId: result.runId });
+        if (isApprovalReply) {
+          broadcast?.({ kind: 'approval.responded', issueId: req.params.id, value: body });
+        } else if (result.runId) {
+          broadcast?.({ kind: 'run.queued', issueId: req.params.id, runId: result.runId });
+        }
       } catch (e) {
         console.error('broadcast failed:', e);
       }
 
-      return res.status(201).json({ id: result.commentId, issueId: req.params.id, authorType: 'user', body, kind: 'message' });
+      return res.status(201).json({ id: result.commentId, issueId: req.params.id, authorType: 'user', body, kind });
     } catch (e) {
       return res.status(500).json({ error: 'internal' });
     }

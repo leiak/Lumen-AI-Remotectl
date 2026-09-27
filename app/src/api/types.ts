@@ -16,7 +16,7 @@ export interface Comment {
   issueId: string;
   authorType: 'user' | 'assistant';
   body: string;
-  kind: 'message' | 'approval' | 'approval_response';
+  kind: 'message' | 'approval' | 'approval_request' | 'approval_response';
   createdAt: number | string;
 }
 

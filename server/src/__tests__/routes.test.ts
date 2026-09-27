@@ -7,7 +7,7 @@ import os from 'node:os';
 import { eq } from 'drizzle-orm';
 import { createDb } from '../db/client.js';
 import { migrate } from '../db/migrate.js';
-import { issues } from '../db/schema.js';
+import { issues, comments, runs } from '../db/schema.js';
 import { issuesRouter } from '../routes/issues.js';
 
 const TOKEN = 'sk-test';
@@ -270,6 +270,118 @@ describe('issues routes', () => {
       try { fs.unlinkSync(dbPath); } catch {}
       try { fs.unlinkSync(dbPath + '-wal'); } catch {}
       try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+    }
+  });
+
+  async function setupAppWithBroadcast(): Promise<{
+    app: express.Express;
+    db: ReturnType<typeof createDb>;
+    dbPath: string;
+    broadcasted: any[];
+  }> {
+    const broadcasted: any[] = [];
+    const bc = (m: any) => broadcasted.push(m);
+    const dbPath = path.join(os.tmpdir(), `approval-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    const db = createDb(dbPath);
+    await migrate(db);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN, bc));
+    return { app, db, dbPath, broadcasted };
+  }
+
+  it("POST /api/issues/:id/comments with body 'yes' persists as approval_response and broadcasts approval.responded", async () => {
+    const ctx = await setupAppWithBroadcast();
+    try {
+      const create = await request(ctx.app)
+        .post('/api/issues')
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ title: 'i', workspacePath: '/x' });
+      const issueId = create.body.id;
+
+      const res = await request(ctx.app)
+        .post(`/api/issues/${issueId}/comments`)
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ body: 'yes' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.body).toBe('yes');
+      expect(res.body.kind).toBe('approval_response');
+
+      const cs = await ctx.db.select().from(comments).where(eq(comments.issueId, issueId)).all();
+      expect(cs).toHaveLength(1);
+      expect(cs[0]!.kind).toBe('approval_response');
+      expect(cs[0]!.body).toBe('yes');
+
+      const appr = ctx.broadcasted.find((b) => b.kind === 'approval.responded');
+      expect(appr).toBeDefined();
+      expect(appr.value).toBe('yes');
+      expect(appr.issueId).toBe(issueId);
+    } finally {
+      try { fs.unlinkSync(ctx.dbPath); } catch {}
+      try { fs.unlinkSync(ctx.dbPath + '-wal'); } catch {}
+      try { fs.unlinkSync(ctx.dbPath + '-shm'); } catch {}
+    }
+  });
+
+  it("POST /api/issues/:id/comments with body 'no' persists as approval_response and broadcasts approval.responded", async () => {
+    const ctx = await setupAppWithBroadcast();
+    try {
+      const create = await request(ctx.app)
+        .post('/api/issues')
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ title: 'i', workspacePath: '/x' });
+      const issueId = create.body.id;
+
+      const res = await request(ctx.app)
+        .post(`/api/issues/${issueId}/comments`)
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ body: 'no' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.body).toBe('no');
+      expect(res.body.kind).toBe('approval_response');
+
+      const cs = await ctx.db.select().from(comments).where(eq(comments.issueId, issueId)).all();
+      expect(cs).toHaveLength(1);
+      expect(cs[0]!.kind).toBe('approval_response');
+      expect(cs[0]!.body).toBe('no');
+
+      const appr = ctx.broadcasted.find((b) => b.kind === 'approval.responded');
+      expect(appr).toBeDefined();
+      expect(appr.value).toBe('no');
+      expect(appr.issueId).toBe(issueId);
+    } finally {
+      try { fs.unlinkSync(ctx.dbPath); } catch {}
+      try { fs.unlinkSync(ctx.dbPath + '-wal'); } catch {}
+      try { fs.unlinkSync(ctx.dbPath + '-shm'); } catch {}
+    }
+  });
+
+  it("POST /api/issues/:id/comments with body 'yes' does NOT create a new run", async () => {
+    const ctx = await setupAppWithBroadcast();
+    try {
+      const create = await request(ctx.app)
+        .post('/api/issues')
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ title: 'i', workspacePath: '/x' });
+      const issueId = create.body.id;
+
+      const res = await request(ctx.app)
+        .post(`/api/issues/${issueId}/comments`)
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ body: 'yes' });
+      expect(res.status).toBe(201);
+
+      const rs = await ctx.db.select().from(runs).where(eq(runs.issueId, issueId)).all();
+      expect(rs).toHaveLength(0);
+
+      // And no run.queued broadcast.
+      expect(ctx.broadcasted.some((b) => b.kind === 'run.queued')).toBe(false);
+    } finally {
+      try { fs.unlinkSync(ctx.dbPath); } catch {}
+      try { fs.unlinkSync(ctx.dbPath + '-wal'); } catch {}
+      try { fs.unlinkSync(ctx.dbPath + '-shm'); } catch {}
     }
   });
 });

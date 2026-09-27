@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useApi } from '../api/context';
 import { fmtError } from '../api/client';
 import type { Issue, Comment } from '../api/types';
+import { ApprovalCard } from '../components/ApprovalCard';
 
 export function IssueDetail() {
   const { id } = useParams<{ id: string }>();
@@ -12,6 +13,18 @@ export function IssueDetail() {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!id) return;
+    try {
+      const [iss, cmts] = await Promise.all([api.getIssue(id), api.listComments(id)]);
+      setError(null);
+      setIssue(iss);
+      setComments(cmts);
+    } catch (e) {
+      setError(fmtError(e));
+    }
+  }, [api, id]);
 
   useEffect(() => {
     if (!id) return;
@@ -66,12 +79,25 @@ export function IssueDetail() {
         <code className="workspace">{issue.workspacePath}</code>
       </div>
       <ul className="comments">
-        {comments.map((c) => (
-          <li key={c.id} className={`comment comment-${c.authorType}`}>
-            <span className="author">{c.authorType}</span>
-            <p>{c.body}</p>
-          </li>
-        ))}
+        {comments.map((c) => {
+          if (c.kind === 'approval_request') {
+            return (
+              <ApprovalCard
+                key={c.id}
+                issueId={id!}
+                commentId={c.id}
+                body={c.body}
+                onResolved={load}
+              />
+            );
+          }
+          return (
+            <li key={c.id} className={`comment comment-${c.authorType}`}>
+              <span className="author">{c.authorType}</span>
+              <p>{c.body}</p>
+            </li>
+          );
+        })}
       </ul>
       <form onSubmit={onSubmit} className="comment-form">
         <textarea

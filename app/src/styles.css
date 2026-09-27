@@ -225,3 +225,39 @@ main {
   background: var(--accent);
   color: #fff;
 }
+
+.approval-card {
+  border-left: 3px solid #d4a017;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.approval-actions button {
+  background: var(--border);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.approval-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.approval-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.approval-error {
+  color: #f55;
+  font-size: 12px;
+  margin: 4px 0 0 0;
+}
