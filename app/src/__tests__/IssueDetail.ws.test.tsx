@@ -22,6 +22,7 @@ const fakeWs = {
   },
   __emit: (m: any) => handlers.slice().forEach((h) => h(m)),
   __reset: () => { handlers.length = 0; },
+  __handlers: () => handlers,
 };
 
 vi.mock('../ws', () => ({
@@ -96,6 +97,9 @@ describe('IssueDetail WS subscription', () => {
     await waitFor(() => expect(screen.getByText('do thing')).toBeInTheDocument());
     unmount();
     expect(fakeWs.disconnect).toHaveBeenCalledTimes(1);
+    // Handler should be unsubscribed: the effect's cancelled flag flips and
+    // `unsub()` removes the handler from the (module-level) registration list.
+    expect(fakeWs.__handlers()).toEqual([]);
   });
 
   it('does not connect WS when host is missing', () => {
@@ -124,21 +128,35 @@ describe('IssueDetail WS subscription', () => {
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore));
   });
 
-  it('reloads on run_started / run_finished / run_event / approval_responded for this issue', async () => {
+  it('reloads on run_started / run_finished / issue_updated / approval_responded for this issue', async () => {
     const { fetchMock } = renderDetail();
     await waitFor(() => expect(screen.getByText('do thing')).toBeInTheDocument());
 
     const events = [
       { type: 'run_started', runId: 'r-1', issueId: 'i-1', event_id: 1 },
-      { type: 'run_event', runId: 'r-1', issueId: 'i-1', stream: 'stdout' as const, content: 'x', event_id: 2 },
-      { type: 'run_finished', runId: 'r-1', status: 'done' as const, event_id: 3 },
-      { type: 'approval_responded', issueId: 'i-1', value: 'ok', event_id: 4 },
+      { type: 'run_finished', runId: 'r-1', issueId: 'i-1', status: 'done' as const, event_id: 3 },
+      { type: 'issue_updated', issueId: 'i-1', status: 'done' as const, event_id: 4 },
+      { type: 'approval_responded', issueId: 'i-1', value: 'ok', event_id: 5 },
     ];
     for (const ev of events) {
       const before = fetchMock.mock.calls.length;
       act(() => { fakeWs.__emit(ev); });
       await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(before), { timeout: 1000 });
     }
+  });
+
+  it('does not reload on run_event even for the same issue (stream-level noise)', async () => {
+    const { fetchMock } = renderDetail();
+    await waitFor(() => expect(screen.getByText('do thing')).toBeInTheDocument());
+    const callsBefore = fetchMock.mock.calls.length;
+
+    act(() => {
+      fakeWs.__emit({ type: 'run_event', runId: 'r-1', issueId: 'i-1', stream: 'stdout', content: 'x', event_id: 1 });
+    });
+
+    // Give any spurious reload a chance to land.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
   });
 
   it('ignores events addressed to a different issueId', async () => {

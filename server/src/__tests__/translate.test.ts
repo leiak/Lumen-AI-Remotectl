@@ -37,7 +37,7 @@ describe('broadcastToWs translator', () => {
     const hub = makeHub();
     broadcastToWs(hub as any, { kind: 'run.finished', runId: 'r1', issueId: 'i1', exit_code: 0 });
     expect(hub.broadcast).toHaveBeenCalledWith({
-      type: 'run_finished', runId: 'r1', status: 'done',
+      type: 'run_finished', runId: 'r1', issueId: 'i1', status: 'done',
     });
   });
 
@@ -45,7 +45,7 @@ describe('broadcastToWs translator', () => {
     const hub = makeHub();
     broadcastToWs(hub as any, { kind: 'run.finished', runId: 'r1', issueId: 'i1', exit_code: 2 });
     expect(hub.broadcast).toHaveBeenCalledWith({
-      type: 'run_finished', runId: 'r1', status: 'failed',
+      type: 'run_finished', runId: 'r1', issueId: 'i1', status: 'failed',
     });
   });
 

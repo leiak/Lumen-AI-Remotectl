@@ -38,6 +38,7 @@ export function broadcastToWs(hub: BroadcastHub, msg: RouteEvent): void {
       hub.broadcast({
         type: 'run_finished',
         runId: msg.runId,
+        issueId: msg.issueId,
         status: msg.exit_code === 0 ? 'done' : 'failed',
       });
       return;

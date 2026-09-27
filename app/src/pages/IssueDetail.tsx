@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useApi } from '../api/context';
 import { fmtError } from '../api/client';
-import type { Issue, Comment } from '../api/types';
+import type { Issue, Comment, BroadcastEvent } from '../api/types';
 import { ApprovalCard } from '../components/ApprovalCard';
 import { WsClient } from '../ws';
 import { storage } from '../storage';
@@ -47,23 +47,29 @@ export function IssueDetail() {
 
   // Live updates via WebSocket. Filter on `issueId` so a user looking at
   // Issue A doesn't see Issue B's status changes ripple through here.
+  // `run_event` is excluded: it's a stream-level event fired per stdout/stderr
+  // chunk during an active run, captured by LiveStream — it doesn't change
+  // issue or comments state, so reloading here would just hammer the API and
+  // cause page flicker.
   useEffect(() => {
     if (!id) return;
     if (!storage.getHost() || !storage.getApiKey()) return;
 
+    let cancelled = false;
     const ws = new WsClient({ baseBackoffMs: 1000, maxBackoffMs: 30_000 });
-    const unsub = ws.onMessage((msg: any) => {
+    const unsub = ws.onMessage((msg: BroadcastEvent) => {
+      if (cancelled) return;
+      // Defensive guard: WsClient emits whatever the WS sends. Treat malformed
+      // frames (null, non-objects, missing fields) as no-ops rather than
+      // throwing — the page should remain interactive even on bad input.
       if (!msg || typeof msg !== 'object') return;
-      // Filter events for other issues when we have an `issueId` to filter on.
-      // `run_finished` does not currently carry `issueId` in the BroadcastEvent
-      // union (a server-side gap), so for that one event we can't filter and
-      // it will trigger a reload here — that's acceptable: run-finished is rare
-      // and false-positive reloads are cheaper than missing the actual finish.
+      // Filter events for other issues. Now that `run_finished` carries
+      // `issueId` server-side, the filter is strict for every event type.
       if (typeof msg.issueId === 'string' && msg.issueId !== id) return;
       switch (msg.type) {
         case 'run_started':
-        case 'run_event':
         case 'run_finished':
+        case 'issue_updated':
         case 'approval_requested':
         case 'approval_responded':
           load();
@@ -73,6 +79,7 @@ export function IssueDetail() {
     ws.connect();
 
     return () => {
+      cancelled = true;
       unsub();
       ws.disconnect();
     };

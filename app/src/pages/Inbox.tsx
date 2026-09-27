@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApi } from '../api/context';
 import { fmtError } from '../api/client';
-import type { Issue } from '../api/types';
+import type { Issue, BroadcastEvent } from '../api/types';
 import { WsClient } from '../ws';
 import { storage } from '../storage';
 
@@ -38,8 +38,10 @@ export function Inbox() {
   useEffect(() => {
     if (!storage.getHost() || !storage.getApiKey()) return;
 
+    let cancelled = false;
     const ws = new WsClient({ baseBackoffMs: 1000, maxBackoffMs: 30_000 });
-    const unsub = ws.onMessage((msg: any) => {
+    const unsub = ws.onMessage((msg: BroadcastEvent) => {
+      if (cancelled) return;
       if (!msg || typeof msg !== 'object') return;
       switch (msg.type) {
         case 'issue_updated':
@@ -53,6 +55,7 @@ export function Inbox() {
     ws.connect();
 
     return () => {
+      cancelled = true;
       unsub();
       ws.disconnect();
     };

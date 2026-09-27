@@ -24,6 +24,7 @@ const fakeWs = {
   },
   __emit: (m: any) => handlers.slice().forEach((h) => h(m)),
   __reset: () => { handlers.length = 0; },
+  __handlers: () => handlers,
 };
 
 vi.mock('../ws', () => ({
@@ -72,6 +73,9 @@ describe('Inbox WS subscription', () => {
     const { unmount } = render(<MemoryRouter><ApiProvider client={api}><Inbox /></ApiProvider></MemoryRouter>);
     unmount();
     expect(fakeWs.disconnect).toHaveBeenCalledTimes(1);
+    // Handler should be unsubscribed: the effect's cleanup runs unsub() which
+    // removes the handler from the (module-level) registration list.
+    expect(fakeWs.__handlers()).toEqual([]);
   });
 
   it('does not connect WS when host is missing', () => {
