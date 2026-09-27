@@ -3,11 +3,12 @@ import { eq, desc } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { issues, comments, runs } from '../db/schema.js';
 import { createAuthMiddleware } from '../auth.js';
+import type { RouteEvent } from '../events/translate.js';
 
 const ALLOWED_PRIORITIES = ['low', 'medium', 'high'] as const;
 type Priority = typeof ALLOWED_PRIORITIES[number];
 
-export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: any) => void): Router {
+export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: RouteEvent) => void): Router {
   const r = Router();
   r.use(createAuthMiddleware(apiKey));
 
@@ -83,8 +84,13 @@ export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: any) => v
       if (result.kind === 'cancelled') return res.status(409).json({ error: 'issue_cancelled' });
       if (result.kind === 'invalid_status') return res.status(409).json({ error: 'issue_terminal', status: 'cancelled_or_done' });
 
-      broadcast?.({ kind: 'comment.created', issueId: req.params.id, commentId: result.commentId });
-      broadcast?.({ kind: 'run.queued', issueId: req.params.id, runId: result.runId });
+      // Broadcast (best-effort). A failure here must not break the response — the
+      // comment + run are already committed by the transaction.
+      try {
+        broadcast?.({ kind: 'run.queued', issueId: req.params.id, runId: result.runId });
+      } catch (e) {
+        console.error('broadcast failed:', e);
+      }
 
       return res.status(201).json({ id: result.commentId, issueId: req.params.id, authorType: 'user', body, kind: 'message' });
     } catch (e) {

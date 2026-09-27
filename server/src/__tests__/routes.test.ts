@@ -4,8 +4,10 @@ import request from 'supertest';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import { eq } from 'drizzle-orm';
 import { createDb } from '../db/client.js';
 import { migrate } from '../db/migrate.js';
+import { issues } from '../db/schema.js';
 import { issuesRouter } from '../routes/issues.js';
 
 const TOKEN = 'sk-test';
@@ -136,8 +138,134 @@ describe('issues routes', () => {
         .set('Authorization', `Bearer ${TOKEN}`)
         .send({ body: 'go' });
 
-      expect(broadcasted.some((b) => b.kind === 'comment.created')).toBe(true);
       expect(broadcasted.some((b) => b.kind === 'run.queued')).toBe(true);
+    } finally {
+      try { fs.unlinkSync(dbPath); } catch {}
+      try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+      try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+    }
+  });
+
+  it('POST /api/issues/:id/comments does NOT broadcast on unknown issue', async () => {
+    const broadcasted: any[] = [];
+    const bc = (m: any) => broadcasted.push(m);
+
+    const dbPath = path.join(os.tmpdir(), `bc-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    const db = createDb(dbPath);
+    await migrate(db);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN, bc));
+
+    try {
+      const res = await request(app)
+        .post('/api/issues/does-not-exist/comments')
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ body: 'hi' });
+      expect(res.status).toBe(404);
+      expect(broadcasted).toHaveLength(0);
+    } finally {
+      try { fs.unlinkSync(dbPath); } catch {}
+      try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+      try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+    }
+  });
+
+  it('POST /api/issues/:id/comments does NOT broadcast on cancelled issue', async () => {
+    const broadcasted: any[] = [];
+    const bc = (m: any) => broadcasted.push(m);
+
+    const dbPath = path.join(os.tmpdir(), `bc-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    const db = createDb(dbPath);
+    await migrate(db);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN, bc));
+
+    try {
+      // Create an issue via the route.
+      const create = await request(app)
+        .post('/api/issues')
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ title: 'i', workspacePath: '/x' });
+      const issueId = create.body.id;
+
+      // Force the issue into 'cancelled' via direct DB update.
+      await db.update(issues)
+        .set({ status: 'cancelled', updatedAt: new Date() })
+        .where(eq(issues.id, issueId))
+        .run();
+
+      const res = await request(app)
+        .post(`/api/issues/${issueId}/comments`)
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ body: 'hi' });
+      expect(res.status).toBe(409);
+      expect(broadcasted).toHaveLength(0);
+    } finally {
+      try { fs.unlinkSync(dbPath); } catch {}
+      try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+      try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+    }
+  });
+
+  it('POST /api/issues/:id/comments does NOT broadcast on done (terminal) issue', async () => {
+    const broadcasted: any[] = [];
+    const bc = (m: any) => broadcasted.push(m);
+
+    const dbPath = path.join(os.tmpdir(), `bc-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    const db = createDb(dbPath);
+    await migrate(db);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN, bc));
+
+    try {
+      // Create an issue via the route.
+      const create = await request(app)
+        .post('/api/issues')
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ title: 'i', workspacePath: '/x' });
+      const issueId = create.body.id;
+
+      // Force the issue into 'done' (terminal) via direct DB update.
+      await db.update(issues)
+        .set({ status: 'done', updatedAt: new Date() })
+        .where(eq(issues.id, issueId))
+        .run();
+
+      const res = await request(app)
+        .post(`/api/issues/${issueId}/comments`)
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ body: 'hi' });
+      expect(res.status).toBe(409);
+      expect(broadcasted).toHaveLength(0);
+    } finally {
+      try { fs.unlinkSync(dbPath); } catch {}
+      try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+      try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+    }
+  });
+
+  it('POST /api/issues/:id/comments still returns 201 if broadcast throws', async () => {
+    const dbPath = path.join(os.tmpdir(), `bc-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    const db = createDb(dbPath);
+    await migrate(db);
+    const app = express();
+    app.use(express.json());
+    // Throwing broadcaster — must NOT break the HTTP response.
+    app.use('/api/issues', issuesRouter(db, TOKEN, () => { throw new Error('boom'); }));
+
+    try {
+      const create = await request(app)
+        .post('/api/issues')
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ title: 'i', workspacePath: '/x' });
+      const res = await request(app)
+        .post(`/api/issues/${create.body.id}/comments`)
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ body: 'go' });
+      expect(res.status).toBe(201);
     } finally {
       try { fs.unlinkSync(dbPath); } catch {}
       try { fs.unlinkSync(dbPath + '-wal'); } catch {}
