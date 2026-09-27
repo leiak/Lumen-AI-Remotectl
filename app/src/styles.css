@@ -173,3 +173,55 @@ main {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.livestream .stream {
+  background: #0a0c10;
+  color: #0f0;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  height: calc(100vh - 200px);
+  overflow-y: auto;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+}
+
+.stream-event {
+  margin-bottom: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.stream-event .event-type {
+  color: #888;
+  margin-right: 6px;
+}
+
+.stream-assistant_text { color: #0f0; }
+.stream-tool_use { color: #ff0; }
+.stream-error { color: #f55; }
+.stream-tool_result { color: #0ff; }
+.stream-session_start { color: #4f8cff; }
+.stream-session_end { color: #888; }
+
+.livestream .muted {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.live-stream-link {
+  display: inline-block;
+  margin: 12px 0;
+  padding: 8px 12px;
+  background: var(--border);
+  color: var(--fg);
+  text-decoration: none;
+  border-radius: 6px;
+}
+
+.live-stream-link:hover {
+  background: var(--accent);
+  color: #fff;
+}

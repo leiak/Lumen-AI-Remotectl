@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useApi } from '../api/context';
 import { fmtError } from '../api/client';
 import type { Issue, Comment } from '../api/types';
@@ -55,6 +55,11 @@ export function IssueDetail() {
   return (
     <div className="page issue-detail">
       <h2>{issue.title}</h2>
+      {issue.status === 'in_progress' && (
+        <Link to={`/issues/${id}/stream`} className="live-stream-link">
+          📺 Live stream
+        </Link>
+      )}
       <div className="meta">
         <span className={`badge badge-${issue.status}`}>{issue.status}</span>
         <span className={`badge badge-priority-${issue.priority}`}>{issue.priority}</span>

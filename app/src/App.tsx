@@ -1,6 +1,7 @@
 import { Link, Route, Routes } from 'react-router-dom';
 import { Inbox } from './pages/Inbox';
 import { IssueDetail } from './pages/IssueDetail';
+import { LiveStream } from './pages/LiveStream';
 import { Settings } from './pages/Settings';
 
 export function App() {
@@ -17,6 +18,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Inbox />} />
           <Route path="/issues/:id?" element={<IssueDetail />} />
+          <Route path="/issues/:id/stream" element={<LiveStream />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<div className="page"><h2>Not Found</h2><p>No such page.</p></div>} />
         </Routes>
