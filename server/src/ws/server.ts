@@ -63,6 +63,16 @@ export async function createWsServer(opts: CreateWsServerOpts): Promise<WsServer
     port,
     close: () =>
       new Promise<void>((resolve) => {
+        // wss.close() only stops accepting new connections; it does not
+        // actively terminate existing clients. Drain them explicitly so a
+        // stuck connection can't hang Ctrl+C forever.
+        for (const client of wss.clients) {
+          try {
+            client.close(1001, 'server shutting down');
+          } catch {
+            // ignore individual client close failures
+          }
+        }
         wss.close(() => http.close(() => resolve()));
       }),
   };
