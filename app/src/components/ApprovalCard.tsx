@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useApi } from '../api/context';
+import { APPROVAL_NO, APPROVAL_YES, type ApprovalValue } from '../api/constants';
 
 export interface ApprovalCardProps {
   issueId: string;
@@ -13,7 +14,7 @@ export function ApprovalCard({ issueId, commentId, body, onResolved }: ApprovalC
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const respond = async (value: 'yes' | 'no') => {
+  const respond = async (value: ApprovalValue) => {
     if (busy) return;
     setBusy(true);
     setError(null);
@@ -34,10 +35,10 @@ export function ApprovalCard({ issueId, commentId, body, onResolved }: ApprovalC
       <p>{body}</p>
       {error && <p className="approval-error">Failed to send response: {error}</p>}
       <div className="approval-actions">
-        <button type="button" onClick={() => respond('yes')} disabled={busy} aria-label="Approve">
+        <button type="button" onClick={() => respond(APPROVAL_YES)} disabled={busy} aria-label="Approve">
           {busy ? '…' : '✓ Approve'}
         </button>
-        <button type="button" onClick={() => respond('no')} disabled={busy} aria-label="Deny">
+        <button type="button" onClick={() => respond(APPROVAL_NO)} disabled={busy} aria-label="Deny">
           {busy ? '…' : '✗ Deny'}
         </button>
       </div>

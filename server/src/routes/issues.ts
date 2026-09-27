@@ -46,6 +46,7 @@ export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: RouteEven
     const { body } = req.body as { body?: unknown };
     if (typeof body !== 'string' || !body) return res.status(400).json({ error: 'body_required_string' });
 
+    // Approval reply tokens — must match app/src/api/constants.ts APPROVAL_YES/APPROVAL_NO
     const isApprovalReply = body === 'yes' || body === 'no';
     const kind: 'message' | 'approval_response' = isApprovalReply ? 'approval_response' : 'message';
 
