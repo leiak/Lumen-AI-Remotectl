@@ -13,6 +13,7 @@ function mockApi(opts: {
   comments?: Comment[];
   addComment?: (id: string, body: string) => Promise<Comment>;
   failList?: boolean;
+  failIssueStatus?: number;
 }) {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/api/issues') && (!init || init.method === undefined || init.method === 'GET')) {
@@ -21,6 +22,7 @@ function mockApi(opts: {
     }
     const issueMatch = url.match(/\/api\/issues\/([^/]+)$/);
     if (issueMatch && issueMatch[1] !== undefined) {
+      if (opts.failIssueStatus) return new Response('{"error":"server down"}', { status: opts.failIssueStatus, headers: { 'content-type': 'application/json' } });
       const iss = opts.issue;
       if (!iss) return new Response('', { status: 404 });
       return new Response(JSON.stringify(iss), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -102,5 +104,52 @@ describe('IssueDetail page', () => {
     fireEvent.change(textarea, { target: { value: 'continue' } });
     fireEvent.click(screen.getByRole('button', { name: /Send/i }));
     await waitFor(() => expect(screen.getByText('continue')).toBeInTheDocument());
+  });
+
+  it('renders error state with 404 when getIssue 404s', async () => {
+    const api = mockApi({ comments: sampleComments });
+    render(
+      <MemoryRouter initialEntries={['/issues/missing']}>
+        <ApiProvider client={api}>
+          <Routes>
+            <Route path="/issues/:id" element={<IssueDetail />} />
+          </Routes>
+        </ApiProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByText(/Error.*404/i)).toBeInTheDocument());
+  });
+
+  it('renders error state with 500 when getIssue 500s', async () => {
+    const api = mockApi({ failIssueStatus: 500 });
+    render(
+      <MemoryRouter initialEntries={['/issues/i-1']}>
+        <ApiProvider client={api}>
+          <Routes>
+            <Route path="/issues/:id" element={<IssueDetail />} />
+          </Routes>
+        </ApiProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByText(/Error.*500/i)).toBeInTheDocument());
+  });
+
+  it('renders page with empty comments list and working form', async () => {
+    const api = mockApi({ issue: sampleIssue, comments: [] });
+    render(
+      <MemoryRouter initialEntries={['/issues/i-1']}>
+        <ApiProvider client={api}>
+          <Routes>
+            <Route path="/issues/:id" element={<IssueDetail />} />
+          </Routes>
+        </ApiProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByText('do thing')).toBeInTheDocument());
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+    const textarea = screen.getByPlaceholderText(/Write a reply/i);
+    fireEvent.change(textarea, { target: { value: 'hello' } });
+    fireEvent.click(screen.getByRole('button', { name: /Send/i }));
+    await waitFor(() => expect(screen.getByText('hello')).toBeInTheDocument());
   });
 });

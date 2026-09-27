@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import { useApi } from '../api/context';
+import { fmtError } from '../api/client';
 import type { Issue, Comment } from '../api/types';
 
 export function IssueDetail() {
@@ -15,30 +16,37 @@ export function IssueDetail() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    setIssue(null);
+    setComments(null);
+    setError(null);
     Promise.all([api.getIssue(id), api.listComments(id)])
       .then(([iss, cmts]) => {
         if (cancelled) return;
+        setError(null);
         setIssue(iss);
         setComments(cmts);
       })
-      .catch((e) => { if (!cancelled) setError(String(e)); });
+      .catch((e) => { if (!cancelled) setError(fmtError(e)); });
     return () => { cancelled = true; };
   }, [api, id]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!id || !draft.trim() || submitting) return;
+    if (!id || !comments) return;
+    if (!canSend) return;
     setSubmitting(true);
     try {
       const c = await api.addComment(id, { body: draft.trim() });
-      setComments((prev) => [...(prev ?? []), c]);
+      setComments((prev) => [...prev, c]);
       setDraft('');
     } catch (e) {
-      setError(String(e));
+      setError(fmtError(e));
     } finally {
       setSubmitting(false);
     }
   }
+
+  const canSend = !!id && !!draft.trim() && !submitting;
 
   if (!id) return <div className="page issue-detail"><h2>Issue</h2><p>Missing id.</p></div>;
   if (error) return <div className="page issue-detail error">Error: {error}</div>;
@@ -67,7 +75,7 @@ export function IssueDetail() {
           placeholder="Write a reply…"
           rows={3}
         />
-        <button type="submit" disabled={!draft.trim() || submitting}>
+        <button type="submit" disabled={!canSend}>
           {submitting ? 'Sending…' : 'Send'}
         </button>
       </form>

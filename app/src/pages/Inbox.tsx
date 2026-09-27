@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApi } from '../api/context';
+import { fmtError } from '../api/client';
 import type { Issue } from '../api/types';
 
 export function Inbox() {
@@ -10,9 +11,10 @@ export function Inbox() {
 
   useEffect(() => {
     let cancelled = false;
+    setError(null);
     api.listIssues()
-      .then((data) => { if (!cancelled) setIssues(data); })
-      .catch((e) => { if (!cancelled) setError(String(e)); });
+      .then((data) => { if (!cancelled) { setError(null); setIssues(data); } })
+      .catch((e) => { if (!cancelled) setError(fmtError(e)); });
     return () => { cancelled = true; };
   }, [api]);
 

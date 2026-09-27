@@ -13,6 +13,14 @@ export class ApiError extends Error {
   }
 }
 
+export function fmtError(e: unknown): string {
+  if (e && typeof e === 'object' && 'status' in e && typeof (e as { status: unknown }).status === 'number') {
+    const err = e as { status: number; message?: string };
+    return `${err.status}: ${err.message ?? 'request failed'}`;
+  }
+  return String(e);
+}
+
 export class ApiClient {
   private baseUrl: string;
   private apiKey: string;
