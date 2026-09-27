@@ -23,6 +23,6 @@ export interface Comment {
 export type BroadcastEvent =
   | { type: 'issue_updated'; issueId: string; status: IssueStatus }
   | { type: 'run_started'; runId: string; issueId: string }
-  | { type: 'run_event'; runId: string; stream: 'stdout' | 'stderr'; content: string }
+  | { type: 'run_event'; runId: string; issueId: string; stream: 'stdout' | 'stderr'; content: string }
   | { type: 'run_finished'; runId: string; status: 'done' | 'failed' | 'cancelled'; error?: string }
   | { type: 'approval_required'; runId: string; issueId: string; question: string };

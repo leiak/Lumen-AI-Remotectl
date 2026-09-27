@@ -91,7 +91,7 @@ describe('WS server', () => {
     ws.on('message', (data) => received.push(data.toString()));
 
     hub.broadcast({ type: 'issue_updated', issueId: 'i-q1', status: 'in_progress' });
-    hub.broadcast({ type: 'run_event', runId: 'r-q1', stream: 'stdout', content: 'hi' });
+    hub.broadcast({ type: 'run_event', runId: 'r-q1', issueId: 'i-q1', stream: 'stdout', content: 'hi' });
 
     await new Promise<void>((resolve) => {
       const check = () => {
@@ -154,7 +154,7 @@ describe('WS server', () => {
     ws.on('message', (data) => received.push(data.toString()));
 
     hub.broadcast({ type: 'issue_updated', issueId: 'i-1', status: 'in_progress' });
-    hub.broadcast({ type: 'run_event', runId: 'r-1', stream: 'stdout', content: 'hello' });
+    hub.broadcast({ type: 'run_event', runId: 'r-1', issueId: 'i-1', stream: 'stdout', content: 'hello' });
 
     // Deterministic wait: wait for two messages, no setTimeout needed
     await new Promise<void>((resolve) => {

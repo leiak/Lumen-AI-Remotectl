@@ -27,6 +27,7 @@ export function broadcastToWs(hub: BroadcastHub, msg: RouteEvent): void {
       hub.broadcast({
         type: 'run_event',
         runId: msg.runId,
+        issueId: msg.issueId,
         stream: 'stdout',
         content: JSON.stringify(msg.event),
       });
