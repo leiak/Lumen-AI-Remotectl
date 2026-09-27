@@ -8,8 +8,8 @@ import type { BroadcastHub } from '../ws/broadcast.js';
 export type RouteEvent =
   | { kind: 'run.queued'; issueId: string; runId: string }
   | { kind: 'run.started'; runId: string; issueId: string }
-  | { kind: 'run.event'; runId: string; issue_id: string; event: unknown }
-  | { kind: 'run.finished'; runId: string; issue_id: string; exit_code: number };
+  | { kind: 'run.event'; runId: string; issueId: string; event: unknown }
+  | { kind: 'run.finished'; runId: string; issueId: string; exit_code: number };
 
 /**
  * Translate a route-layer event into the WS-layer event shape and fan it out

@@ -15,9 +15,6 @@ export interface RunOnceOpts {
   runId: string;
   issueId: string;
   adapter: ClaudeAdapter;
-  binary: string;
-  baseArgs: string[];
-  workspacePath: string;
   broadcast: (msg: RouteEvent) => void;
 }
 
@@ -54,7 +51,7 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
       ? { resume: issue.currentSessionId, prompt }
       : { fresh: true, prompt };
     handle = opts.adapter.start(adapterOpts, (evt: ClaudeEvent) => {
-      opts.broadcast({ kind: 'run.event', runId: opts.runId, issue_id: opts.issueId, event: evt });
+      opts.broadcast({ kind: 'run.event', runId: opts.runId, issueId: opts.issueId, event: evt });
       // Persist to run_events (fire and forget — don't block event delivery)
       opts.db.insert(runEvents).values({
         runId: opts.runId,
@@ -64,9 +61,9 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
       }).run().catch((e) => console.error('runEvents insert failed:', e));
     });
   } catch (e) {
-    const error = String(e);
+    const error = e instanceof Error ? (e.stack ?? e.message) : String(e);
     await finishRun(opts.db, opts.runId, 'failed', error);
-    opts.broadcast({ kind: 'run.finished', runId: opts.runId, issue_id: opts.issueId, exit_code: -1 });
+    opts.broadcast({ kind: 'run.finished', runId: opts.runId, issueId: opts.issueId, exit_code: -1 });
     return { kind: 'spawnFailed', error };
   }
 
@@ -78,7 +75,7 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
   }
 
   await finishRun(opts.db, opts.runId, exitCode === 0 ? 'done' : 'failed');
-  opts.broadcast({ kind: 'run.finished', runId: opts.runId, issue_id: opts.issueId, exit_code: exitCode });
+  opts.broadcast({ kind: 'run.finished', runId: opts.runId, issueId: opts.issueId, exit_code: exitCode });
 
   return { kind: 'ok', sessionId, exitCode };
 }
@@ -86,8 +83,6 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
 export interface StartLoopOpts {
   db: Db;
   adapter: ClaudeAdapter;
-  binary: string;
-  baseArgs: string[];
   broadcast: (msg: RouteEvent) => void;
   intervalMs?: number;
 }
@@ -112,9 +107,6 @@ export function startLoop(opts: StartLoopOpts): () => void {
         runId: next.id,
         issueId: next.issueId,
         adapter: opts.adapter,
-        binary: opts.binary,
-        baseArgs: opts.baseArgs,
-        workspacePath: issue.workspacePath,
         broadcast: opts.broadcast,
       });
     } catch (e) {
