@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 
 export function createAuthMiddleware(apiKey: string): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -7,7 +8,9 @@ export function createAuthMiddleware(apiKey: string): RequestHandler {
       return res.status(401).json({ error: 'missing_authorization' });
     }
     const token = header.slice('Bearer '.length);
-    if (token !== apiKey) {
+    const a = Buffer.from(token);
+    const b = Buffer.from(apiKey);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
       return res.status(401).json({ error: 'invalid_token' });
     }
     next();
@@ -15,7 +18,5 @@ export function createAuthMiddleware(apiKey: string): RequestHandler {
 }
 
 export function generateApiKey(): string {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  return 'sk-' + Buffer.from(bytes).toString('base64url');
+  return 'sk-' + randomBytes(24).toString('base64url');
 }
