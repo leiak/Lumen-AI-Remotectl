@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import type { Db } from './db/client.js';
 import { issuesRouter } from './routes/issues.js';
 import { commentsRouter } from './routes/comments.js';
+import { pushRouter } from './routes/push.js';
 import { BroadcastHub } from './ws/broadcast.js';
 import { createWsServer } from './ws/server.js';
 import { broadcastToWs, type RouteEvent } from './events/translate.js';
@@ -32,6 +33,7 @@ export async function createApp(opts: CreateAppOpts): Promise<AppHandle> {
 
   expressApp.use('/api/issues', issuesRouter(opts.db, opts.apiKey, routeBroadcast));
   expressApp.use('/api/comments', commentsRouter(opts.db, opts.apiKey));
+  expressApp.use('/api/push', pushRouter(opts.db, opts.apiKey));
 
   const httpServer = createServer(expressApp);
   await new Promise<void>((resolve, reject) => {
