@@ -1,0 +1,28 @@
+import type { WebSocket } from 'ws';
+
+export type BroadcastEvent =
+  | { type: 'issue_updated'; issueId: string; status: string }
+  | { type: 'run_started'; runId: string; issueId: string }
+  | { type: 'run_event'; runId: string; stream: 'stdout' | 'stderr'; content: string }
+  | { type: 'run_finished'; runId: string; status: 'done' | 'failed' | 'cancelled'; error?: string }
+  | { type: 'approval_required'; runId: string; issueId: string; question: string };
+
+export class BroadcastHub {
+  private sockets = new Set<WebSocket>();
+
+  attach(ws: WebSocket): void {
+    this.sockets.add(ws);
+    ws.on('close', () => this.sockets.delete(ws));
+  }
+
+  broadcast(event: BroadcastEvent): void {
+    const msg = JSON.stringify(event);
+    for (const ws of this.sockets) {
+      if (ws.readyState === 1) ws.send(msg); // 1 = OPEN
+    }
+  }
+
+  size(): number {
+    return this.sockets.size;
+  }
+}
