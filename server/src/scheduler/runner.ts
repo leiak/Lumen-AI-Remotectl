@@ -51,7 +51,7 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
     const adapterOpts = issue.currentSessionId
       ? { resume: issue.currentSessionId, prompt }
       : { fresh: true, prompt };
-    handle = opts.adapter.start(adapterOpts, (evt: ClaudeEvent) => {
+    handle = opts.adapter.start(adapterOpts, async (evt: ClaudeEvent) => {
       // Persist to run_events (fire and forget — don't block event delivery)
       opts.db.insert(runEvents).values({
         runId: opts.runId,
@@ -62,15 +62,22 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
 
       if (evt.type === 'approval_request') {
         const cid = crypto.randomUUID();
-        // Persist as agent comment so the user can see it on the IssueDetail page
-        opts.db.insert(comments).values({
-          id: cid,
-          issueId: opts.issueId,
-          authorType: 'agent',
-          body: evt.question,
-          kind: 'approval_request',
-          createdAt: new Date(),
-        }).run().catch((e) => console.error('comments insert failed:', e));
+        // Persist as agent comment so the user can see it on the IssueDetail page.
+        // Await the insert so we never broadcast a commentId that doesn't exist yet.
+        try {
+          await opts.db.insert(comments).values({
+            id: cid,
+            issueId: opts.issueId,
+            authorType: 'agent',
+            body: evt.question,
+            kind: 'approval_request',
+            createdAt: new Date(),
+          }).run();
+        } catch (e) {
+          console.error('comments insert failed', { runId: opts.runId, issueId: opts.issueId, err: e });
+          // Don't broadcast — clients would see a phantom commentId.
+          return;
+        }
         opts.broadcast({ kind: 'approval.requested', issueId: opts.issueId, commentId: cid });
         return;
       }

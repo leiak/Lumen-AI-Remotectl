@@ -47,5 +47,9 @@ export function broadcastToWs(hub: BroadcastHub, msg: RouteEvent): void {
     case 'approval.responded':
       hub.broadcast({ type: 'approval_responded', issueId: msg.issueId, value: msg.value });
       return;
+    default: {
+      const _exhaustive: never = msg;
+      throw new Error(`unknown RouteEvent: ${JSON.stringify(_exhaustive)}`);
+    }
   }
 }

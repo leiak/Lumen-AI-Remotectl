@@ -264,9 +264,6 @@ describe('runOnce', () => {
       broadcast: bc,
     });
 
-    // Wait a tick for the fire-and-forget comment insert to settle.
-    await new Promise((r) => setTimeout(r, 50));
-
     const cs = await db.select().from(comments).where(eq(comments.issueId, issueId)).all();
     const approval = cs.find((c) => c.kind === 'approval_request');
     expect(approval).toBeDefined();
@@ -313,13 +310,18 @@ describe('runOnce', () => {
 function makeFakeAdapter(events: any[]) {
   return {
     start: (_opts: any, onEvent: any) => {
-      for (const e of events) onEvent(e);
+      // Wait for every emitted event to finish processing before resolving
+      // `done`. This mirrors the real adapter, which only emits `done` after
+      // the underlying process exits — and, crucially, lets the runner's
+      // async `onEvent` callbacks (e.g. approval_request comment insert)
+      // settle before runOnce() returns. Without this, tests would race.
+      const eventPromises = events.map((e) => Promise.resolve(onEvent(e)));
       return {
         stdin: { write: vi.fn() },
-        done: Promise.resolve({
+        done: Promise.all(eventPromises).then(() => ({
           sessionId: events.find((e: any) => e.type === 'session_start')?.session_id ?? null,
           exitCode: events.find((e: any) => e.type === 'session_end')?.exit_code ?? 0,
-        }),
+        })),
       };
     },
   };
@@ -337,13 +339,13 @@ function makeCapturingFakeAdapter(captured: { opts: any }, events: any[]) {
   return {
     start: (opts: any, onEvent: any) => {
       captured.opts = opts;
-      for (const e of events) onEvent(e);
+      const eventPromises = events.map((e) => Promise.resolve(onEvent(e)));
       return {
         stdin: { write: vi.fn() },
-        done: Promise.resolve({
+        done: Promise.all(eventPromises).then(() => ({
           sessionId: null,
           exitCode: events.find((e: any) => e.type === 'session_end')?.exit_code ?? 0,
-        }),
+        })),
       };
     },
   };
