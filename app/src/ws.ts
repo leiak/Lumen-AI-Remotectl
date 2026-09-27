@@ -56,6 +56,7 @@ export class WsClient {
     const apiKey = storage.getApiKey();
     if (!host || !apiKey) return;
     this.stopped = false;
+    this.attempt = 0;
 
     const url = hostWsUrl(host, apiKey);
     const ws = new WebSocket(url);
@@ -89,18 +90,25 @@ export class WsClient {
     };
 
     ws.onerror = () => {
-      // close will fire next; let it handle reconnect.
+      // Standard browser fires 'close' next, but some mobile WebViews can drop 'close' — safety net.
+      if (!this.stopped) {
+        this.scheduleReconnect();
+      }
     };
   }
 
   disconnect(): void {
     this.stopped = true;
+    this.attempt = 0;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.ws?.close();
+    this.ws = null;
   }
 
   private scheduleReconnect(): void {
     if (this.stopped) return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     const delay = this.getBackoffMs();
     this.attempt++;
     this.reconnectTimer = setTimeout(() => this.connect(), delay);
