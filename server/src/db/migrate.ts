@@ -29,6 +29,7 @@ export async function migrate(db: Db) {
     issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     status TEXT NOT NULL,
     trigger TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
     started_at INTEGER,
     finished_at INTEGER,
     cost_cents INTEGER DEFAULT 0,

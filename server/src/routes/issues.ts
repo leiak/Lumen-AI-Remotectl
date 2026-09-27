@@ -1,9 +1,8 @@
 import { Router } from 'express';
 import { eq, desc } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { issues, comments } from '../db/schema.js';
+import { issues, comments, runs } from '../db/schema.js';
 import { createAuthMiddleware } from '../auth.js';
-import { enqueueHeartbeat } from '../scheduler/heartbeat.js';
 
 const ALLOWED_PRIORITIES = ['low', 'medium', 'high'] as const;
 type Priority = typeof ALLOWED_PRIORITIES[number];
@@ -45,22 +44,48 @@ export function issuesRouter(db: Db, apiKey: string): Router {
   r.post('/:id/comments', async (req, res) => {
     const { body } = req.body as { body?: unknown };
     if (typeof body !== 'string' || !body) return res.status(400).json({ error: 'body_required_string' });
-    const issue = await db.select().from(issues).where(eq(issues.id, req.params.id)).get();
-    if (!issue) return res.status(404).json({ error: 'issue_not_found' });
-    const id = crypto.randomUUID();
-    await db.insert(comments).values({
-      id, issueId: req.params.id,
-      authorType: 'user', body, kind: 'message',
-      createdAt: new Date(),
-    }).run();
-    // Trigger next heartbeat
-    await enqueueHeartbeat(db, req.params.id, 'on_comment');
-    // Update issue status to in_progress
-    await db.update(issues)
-      .set({ status: 'in_progress', updatedAt: new Date() })
-      .where(eq(issues.id, req.params.id))
-      .run();
-    res.status(201).json({ id, issueId: req.params.id, authorType: 'user', body, kind: 'message' });
+
+    try {
+      const result = await db.transaction(async (tx) => {
+        const issue = await tx.select().from(issues).where(eq(issues.id, req.params.id)).get();
+        if (!issue) return { kind: 'not_found' as const };
+        if (issue.status === 'cancelled') return { kind: 'cancelled' as const };
+        if (!['todo', 'in_progress', 'in_review'].includes(issue.status)) {
+          return { kind: 'invalid_status' as const };
+        }
+
+        const id = crypto.randomUUID();
+        const now = new Date();
+        await tx.insert(comments).values({
+          id, issueId: req.params.id,
+          authorType: 'user', body, kind: 'message',
+          createdAt: now,
+        }).run();
+
+        const runId = crypto.randomUUID();
+        await tx.insert(runs).values({
+          id: runId, issueId: req.params.id, status: 'queued', trigger: 'on_comment',
+          createdAt: now,
+        }).run();
+
+        // Only flip to in_progress if currently todo or in_review
+        if (issue.status === 'todo' || issue.status === 'in_review') {
+          await tx.update(issues)
+            .set({ status: 'in_progress', updatedAt: now })
+            .where(eq(issues.id, req.params.id))
+            .run();
+        }
+
+        return { kind: 'ok' as const, commentId: id };
+      });
+
+      if (result.kind === 'not_found') return res.status(404).json({ error: 'issue_not_found' });
+      if (result.kind === 'cancelled') return res.status(409).json({ error: 'issue_cancelled' });
+      if (result.kind === 'invalid_status') return res.status(409).json({ error: 'issue_terminal', status: 'cancelled_or_done' });
+      return res.status(201).json({ id: result.commentId, issueId: req.params.id, authorType: 'user', body, kind: 'message' });
+    } catch (e) {
+      return res.status(500).json({ error: 'internal' });
+    }
   });
 
   r.get('/:id/comments', async (req, res) => {

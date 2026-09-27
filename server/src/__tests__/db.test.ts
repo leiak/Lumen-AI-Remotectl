@@ -68,6 +68,7 @@ describe('db', () => {
     }).run();
     await db.insert(runs).values({
       id: runId, issueId, status: 'running', trigger: 'manual',
+      createdAt: new Date(),
     }).run();
 
     await db.insert(runEvents).values({ runId, stream: 'stdout', content: 'line 1', createdAt: new Date() }).run();
@@ -86,7 +87,7 @@ describe('db', () => {
       workspacePath: '/x', createdAt: new Date(), updatedAt: new Date(),
     }).run();
     const runId = crypto.randomUUID();
-    await db.insert(runs).values({ id: runId, issueId, status: 'running', trigger: 'manual' }).run();
+    await db.insert(runs).values({ id: runId, issueId, status: 'running', trigger: 'manual', createdAt: new Date() }).run();
     await db.insert(comments).values({
       id: crypto.randomUUID(), issueId, authorType: 'user', body: 'c', kind: 'message', createdAt: new Date(),
     }).run();

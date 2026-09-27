@@ -5,7 +5,7 @@ import os from 'node:os';
 import { createDb } from '../db/client.js';
 import { migrate } from '../db/migrate.js';
 import { enqueueHeartbeat, claimNextRun, finishRun } from '../scheduler/heartbeat.js';
-import { issues, comments, runs } from '../db/schema.js';
+import { issues, runs } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 
 describe('scheduler', () => {
@@ -64,5 +64,36 @@ describe('scheduler', () => {
     const row = await db.select().from(runs).where(eq(runs.id, runId)).get();
     expect(row?.status).toBe('done');
     expect(row?.finishedAt).toBeInstanceOf(Date);
+  });
+
+  it('claimNextRun returns oldest queued run first (FIFO)', async () => {
+    const r1 = await enqueueHeartbeat(db, issueId, 'on_comment');
+    await new Promise(r => setTimeout(r, 10));
+    const r2 = await enqueueHeartbeat(db, issueId, 'on_comment');
+    const claimed = await claimNextRun(db);
+    expect(claimed?.id).toBe(r1);
+    expect(claimed?.id).not.toBe(r2);
+  });
+
+  it('claimNextRun does not return the same run to two concurrent callers', async () => {
+    await enqueueHeartbeat(db, issueId, 'on_comment');
+    await enqueueHeartbeat(db, issueId, 'on_comment');
+    const [a, b] = await Promise.all([claimNextRun(db), claimNextRun(db)]);
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a!.id).not.toBe(b!.id);
+  });
+
+  it('finishRun is no-op on already-terminal run', async () => {
+    const runId = await enqueueHeartbeat(db, issueId, 'manual');
+    await finishRun(db, runId, 'done');
+    // Second finishRun should not error and should not change status/finishedAt
+    await finishRun(db, runId, 'cancelled');
+    const row = await db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(row?.status).toBe('done');
+  });
+
+  it('enqueueHeartbeat throws on unknown issue', async () => {
+    await expect(enqueueHeartbeat(db, crypto.randomUUID(), 'manual')).rejects.toThrow('issue_not_found');
   });
 });

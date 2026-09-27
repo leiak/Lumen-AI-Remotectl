@@ -26,6 +26,7 @@ export const runs = sqliteTable('runs', {
   issueId: text('issue_id').notNull().references(() => issues.id, { onDelete: 'cascade' }),
   status: text('status', { enum: ['queued', 'running', 'done', 'failed', 'cancelled'] }).notNull(),
   trigger: text('trigger', { enum: ['manual', 'on_comment', 'on_approval', 'on_retry'] }).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
   startedAt: integer('started_at', { mode: 'timestamp_ms' }),
   finishedAt: integer('finished_at', { mode: 'timestamp_ms' }),
   costCents: integer('cost_cents').default(0),
