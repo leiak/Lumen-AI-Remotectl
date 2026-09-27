@@ -26,27 +26,172 @@ describe('WS server', () => {
     });
   });
 
-  it('accepts connection with valid token and receives broadcasts', async () => {
+  it('rejects connection with invalid token', async () => {
+    const hub = new BroadcastHub();
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    cleanup = close;
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
+        headers: { Authorization: 'Bearer wrong-token' },
+      });
+      ws.on('error', () => resolve());
+      ws.on('open', () => reject(new Error('should not open with wrong token')));
+    });
+  });
+
+  it('rejects malformed Authorization header (wrong scheme)', async () => {
+    const hub = new BroadcastHub();
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    cleanup = close;
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
+        headers: { Authorization: `Token ${TOKEN}` },
+      });
+      ws.on('error', () => resolve());
+      ws.on('open', () => reject(new Error('should not open with wrong scheme')));
+    });
+  });
+
+  it('rejects empty token after Bearer', async () => {
+    const hub = new BroadcastHub();
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    cleanup = close;
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
+        headers: { Authorization: 'Bearer ' },
+      });
+      ws.on('error', () => resolve());
+      ws.on('open', () => reject(new Error('should not open with empty token')));
+    });
+  });
+
+  it('treats lowercase "bearer" as malformed (case-sensitive Bearer required)', async () => {
+    const hub = new BroadcastHub();
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    cleanup = close;
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
+        headers: { Authorization: `bearer ${TOKEN}` },
+      });
+      ws.on('error', () => resolve());
+      ws.on('open', () => reject(new Error('lowercase bearer must be rejected (case-sensitive)')));
+    });
+  });
+
+  it('accepts connection with valid token and receives broadcasts (deterministic)', async () => {
     const hub = new BroadcastHub();
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
 
+    const ws = await openAuthorized(port, TOKEN);
+
     const received: string[] = [];
-    const ws = await new Promise<WebSocket>((resolve, reject) => {
-      const sock = new WebSocket(`ws://127.0.0.1:${port}`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      });
-      sock.on('error', (e) => reject(e));
-      sock.on('open', () => resolve(sock));
-      sock.on('message', (data) => received.push(data.toString()));
-    });
+    ws.on('message', (data) => received.push(data.toString()));
 
     hub.broadcast({ type: 'issue_updated', issueId: 'i-1', status: 'in_progress' });
     hub.broadcast({ type: 'run_event', runId: 'r-1', stream: 'stdout', content: 'hello' });
 
-    await new Promise((r) => setTimeout(r, 50));
+    // Deterministic wait: wait for two messages, no setTimeout needed
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (received.length >= 2) resolve();
+        else setImmediate(check);
+      };
+      check();
+    });
+
     expect(received.some((m) => m.includes('issue_updated'))).toBe(true);
     expect(received.some((m) => m.includes('run_event'))).toBe(true);
     ws.close();
   });
+
+  it('delivers same broadcast to multiple subscribers', async () => {
+    const hub = new BroadcastHub();
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    cleanup = close;
+
+    const wsA = await openAuthorized(port, TOKEN);
+    const wsB = await openAuthorized(port, TOKEN);
+
+    const a: string[] = [];
+    const b: string[] = [];
+    wsA.on('message', (d) => a.push(d.toString()));
+    wsB.on('message', (d) => b.push(d.toString()));
+
+    hub.broadcast({ type: 'run_started', runId: 'r-9', issueId: 'i-9' });
+
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (a.length >= 1 && b.length >= 1) resolve();
+        else setImmediate(check);
+      };
+      check();
+    });
+
+    expect(a.length).toBe(1);
+    expect(b.length).toBe(1);
+    expect(a[0]).toBe(b[0]);
+
+    wsA.close();
+    wsB.close();
+  });
+
+  it('close() drains outstanding sockets before resolving', async () => {
+    const hub = new BroadcastHub();
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    cleanup = () => {}; // close already invoked explicitly
+
+    const ws = await openAuthorized(port, TOKEN);
+    expect(hub.size()).toBe(1);
+
+    // Initiate client close; otherwise wss.close() blocks waiting for the client
+    const wsClosed = new Promise<void>((resolve) => ws.once('close', () => resolve()));
+    ws.close();
+
+    await close();
+    await wsClosed;
+
+    // After close() resolves, the server-side socket should be detached and
+    // the underlying http listener should be released (http.address() === null
+    // is implicit in close() awaiting http.close's callback).
+    expect(hub.size()).toBe(0);
+  });
 });
+
+describe('WS server bind error handling', () => {
+  let cleanup: (() => void) | null = null;
+
+  afterEach(() => {
+    if (cleanup) {
+      cleanup();
+      cleanup = null;
+    }
+  });
+
+  it('rejects with EADDRINUSE when port is already bound', async () => {
+    // First server binds to a real (non-zero) port
+    const hubA = new BroadcastHub();
+    const a = await createWsServer({ port: 0, apiKey: TOKEN, hub: hubA });
+    cleanup = a.close;
+
+    const hubB = new BroadcastHub();
+    // Second server attempts to bind to the same port
+    await expect(
+      createWsServer({ port: a.port, apiKey: TOKEN, hub: hubB }),
+    ).rejects.toThrow();
+  });
+});
+
+/**
+ * Helper: opens an authorized WS connection and waits for 'open' or 'error'.
+ * Resolves the open socket or throws on auth failure.
+ */
+function openAuthorized(port: number, token: string): Promise<WebSocket> {
+  return new Promise<WebSocket>((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    ws.once('error', (err) => reject(err));
+    ws.once('open', () => resolve(ws));
+  });
+}

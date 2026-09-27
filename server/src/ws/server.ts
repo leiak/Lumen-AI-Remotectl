@@ -1,3 +1,5 @@
+// Loopback-only bind is intentional for v0.1 (avoids LAN exposure).
+// Auth happens pre-upgrade: unauthorized clients never complete the handshake.
 import { WebSocketServer, type WebSocket } from 'ws';
 import { createServer, type Server } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
@@ -34,11 +36,26 @@ export async function createWsServer(opts: CreateWsServerOpts): Promise<WsServer
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      opts.hub.attach(ws);
+      try {
+        opts.hub.attach(ws);
+      } catch (err) {
+        console.error('[ws] attach failed:', err);
+        try {
+          ws.close(1011, 'internal error');
+        } catch {
+          socket.destroy();
+        }
+      }
     });
   });
 
-  await new Promise<void>((resolve) => http.listen(opts.port, '127.0.0.1', resolve));
+  await new Promise<void>((resolve, reject) => {
+    http.once('error', reject);
+    http.listen(opts.port, '127.0.0.1', () => {
+      http.off('error', reject);
+      resolve();
+    });
+  });
   const addr = http.address();
   const port = typeof addr === 'object' && addr ? addr.port : opts.port;
 
