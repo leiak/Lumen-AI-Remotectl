@@ -3,6 +3,7 @@ import { eq, desc } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { issues, comments } from '../db/schema.js';
 import { createAuthMiddleware } from '../auth.js';
+import { enqueueHeartbeat } from '../scheduler/heartbeat.js';
 
 const ALLOWED_PRIORITIES = ['low', 'medium', 'high'] as const;
 type Priority = typeof ALLOWED_PRIORITIES[number];
@@ -52,6 +53,13 @@ export function issuesRouter(db: Db, apiKey: string): Router {
       authorType: 'user', body, kind: 'message',
       createdAt: new Date(),
     }).run();
+    // Trigger next heartbeat
+    await enqueueHeartbeat(db, req.params.id, 'on_comment');
+    // Update issue status to in_progress
+    await db.update(issues)
+      .set({ status: 'in_progress', updatedAt: new Date() })
+      .where(eq(issues.id, req.params.id))
+      .run();
     res.status(201).json({ id, issueId: req.params.id, authorType: 'user', body, kind: 'message' });
   });
 
