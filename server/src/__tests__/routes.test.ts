@@ -114,4 +114,34 @@ describe('issues routes', () => {
     const get = await request(ctx.app).get(`/api/issues/${create.body.id}`).set('Authorization', `Bearer ${TOKEN}`);
     expect(get.body.priority).toBe('high');
   });
+
+  it('POST /api/issues/:id/comments fires a broadcast', async () => {
+    const broadcasted: any[] = [];
+    const bc = (m: any) => broadcasted.push(m);
+
+    const dbPath = path.join(os.tmpdir(), `bc-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    const db = createDb(dbPath);
+    await migrate(db);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN, bc));
+
+    try {
+      const create = await request(app)
+        .post('/api/issues')
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ title: 'i', workspacePath: '/x' });
+      await request(app)
+        .post(`/api/issues/${create.body.id}/comments`)
+        .set('Authorization', `Bearer ${TOKEN}`)
+        .send({ body: 'go' });
+
+      expect(broadcasted.some((b) => b.kind === 'comment.created')).toBe(true);
+      expect(broadcasted.some((b) => b.kind === 'run.queued')).toBe(true);
+    } finally {
+      try { fs.unlinkSync(dbPath); } catch {}
+      try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+      try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+    }
+  });
 });

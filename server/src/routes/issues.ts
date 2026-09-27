@@ -7,7 +7,7 @@ import { createAuthMiddleware } from '../auth.js';
 const ALLOWED_PRIORITIES = ['low', 'medium', 'high'] as const;
 type Priority = typeof ALLOWED_PRIORITIES[number];
 
-export function issuesRouter(db: Db, apiKey: string): Router {
+export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: any) => void): Router {
   const r = Router();
   r.use(createAuthMiddleware(apiKey));
 
@@ -76,12 +76,16 @@ export function issuesRouter(db: Db, apiKey: string): Router {
             .run();
         }
 
-        return { kind: 'ok' as const, commentId: id };
+        return { kind: 'ok' as const, commentId: id, runId };
       });
 
       if (result.kind === 'not_found') return res.status(404).json({ error: 'issue_not_found' });
       if (result.kind === 'cancelled') return res.status(409).json({ error: 'issue_cancelled' });
       if (result.kind === 'invalid_status') return res.status(409).json({ error: 'issue_terminal', status: 'cancelled_or_done' });
+
+      broadcast?.({ kind: 'comment.created', issueId: req.params.id, commentId: result.commentId });
+      broadcast?.({ kind: 'run.queued', issueId: req.params.id, runId: result.runId });
+
       return res.status(201).json({ id: result.commentId, issueId: req.params.id, authorType: 'user', body, kind: 'message' });
     } catch (e) {
       return res.status(500).json({ error: 'internal' });

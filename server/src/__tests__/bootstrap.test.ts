@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createApp } from '../index.js';
 import { createDb } from '../db/client.js';
 import { migrate } from '../db/migrate.js';
@@ -146,5 +146,44 @@ describe('bootstrap', () => {
     const stat = fs.statSync(dbPath);
     // Mask with 0o777 to ignore setuid/setgid/sticky bits we don't care about.
     expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it('createApp wires broadcast through hub', async () => {
+    const dbPath = freshDbPath('bcast');
+    dbPathHolder = dbPath;
+    const db = createDb(dbPath);
+    await migrate(db);
+    const hub = new BroadcastHub();
+    const app = await createApp({
+      db,
+      apiKey: 'sk-test-abc',
+      hub,
+      httpPort: 0,
+      wsPort: 0,
+    });
+    cleanup = app.shutdown;
+
+    // Pretend a WS client attached
+    const fakeWs: any = { readyState: 1, send: vi.fn(), on: vi.fn() };
+    hub.attach(fakeWs);
+
+    // Create issue + post comment via the HTTP server
+    const createRes = await fetch(`http://127.0.0.1:${app.httpPort}/api/issues`, {
+      method: 'POST',
+      headers: { authorization: `Bearer sk-test-abc`, 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'i', workspacePath: '/x' }),
+    });
+    const { id } = await createRes.json();
+    const commentRes = await fetch(`http://127.0.0.1:${app.httpPort}/api/issues/${id}/comments`, {
+      method: 'POST',
+      headers: { authorization: `Bearer sk-test-abc`, 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'go' }),
+    });
+    expect(commentRes.status).toBe(201);
+
+    // At least one ws.send was called
+    expect(fakeWs.send).toHaveBeenCalled();
+    const sent = fakeWs.send.mock.calls.map((c: any[]) => c[0]).join('\n');
+    expect(sent).toMatch(/issue_updated|run_started/);
   });
 });
