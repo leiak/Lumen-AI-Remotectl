@@ -54,12 +54,35 @@ export async function migrate(db: Db) {
     id TEXT PRIMARY KEY,
     device_token TEXT NOT NULL UNIQUE,
     platform TEXT NOT NULL,
+    p256dh TEXT,
+    auth TEXT,
     last_seen_at INTEGER NOT NULL
   )`);
+
+  // Migration for pre-Web-Push DBs that created push_devices without the
+  // web subscription columns. SQLite has no `ADD COLUMN IF NOT EXISTS`, so
+  // we detect via pragma and ALTER only when needed.
+  const cols = await db.all<{ name: string }>(`PRAGMA table_info(push_devices)`);
+  const colNames = new Set(cols.map((c) => c.name));
+  if (!colNames.has('p256dh')) {
+    await db.run(`ALTER TABLE push_devices ADD COLUMN p256dh TEXT`);
+  }
+  if (!colNames.has('auth')) {
+    await db.run(`ALTER TABLE push_devices ADD COLUMN auth TEXT`);
+  }
 
   await db.run(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at INTEGER
   )`);
+
+  await db.run(`CREATE TABLE IF NOT EXISTS broadcast_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
+
+  await db.run(`CREATE INDEX IF NOT EXISTS idx_broadcast_log_id ON broadcast_log(id)`);
 }

@@ -11,7 +11,8 @@ export type RouteEvent =
   | { kind: 'run.event'; runId: string; issueId: string; event: unknown }
   | { kind: 'run.finished'; runId: string; issueId: string; exit_code: number }
   | { kind: 'approval.requested'; issueId: string; commentId: string }
-  | { kind: 'approval.responded'; issueId: string; value: string };
+  | { kind: 'approval.responded'; issueId: string; value: string }
+  | { kind: 'comment.deleted'; issueId: string; commentId: string };
 
 /**
  * Translate a route-layer event into the WS-layer event shape and fan it out
@@ -47,6 +48,9 @@ export function broadcastToWs(hub: BroadcastHub, msg: RouteEvent): void {
       return;
     case 'approval.responded':
       hub.broadcast({ type: 'approval_responded', issueId: msg.issueId, value: msg.value });
+      return;
+    case 'comment.deleted':
+      hub.broadcast({ type: 'comment_deleted', issueId: msg.issueId, commentId: msg.commentId });
       return;
     default: {
       const _exhaustive: never = msg;

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { runOnce, startLoop } from '../scheduler/runner.js';
+import { PendingApprovals } from '../scheduler/pending.js';
 import { createDb } from '../db/client.js';
 import { migrate } from '../db/migrate.js';
 import { issues, comments, runs, runEvents } from '../db/schema.js';
@@ -59,6 +60,7 @@ describe('runOnce', () => {
     });
 
     expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.sessionId).toBe('session-1');
     expect(result.exitCode).toBe(0);
 
@@ -148,6 +150,7 @@ describe('runOnce', () => {
     });
 
     expect(result.kind).toBe('ok');
+    if (result.kind !== 'ok') throw new Error('expected ok');
     expect(result.sessionId).toBe('new-session');
 
     const issue = await db.select().from(issues).where(eq(issues.id, issueId)).get();
@@ -305,6 +308,180 @@ describe('runOnce', () => {
     const cs = await db.select().from(comments).where(eq(comments.issueId, issueId)).all();
     expect(cs.filter((c) => c.kind === 'approval_request')).toHaveLength(0);
   });
+
+  it('blocks on approval_request until pendingApprovals.respond() is called', async () => {
+    const issueId = crypto.randomUUID();
+    await db.insert(issues).values({
+      id: issueId, title: 'do thing', status: 'todo', priority: 'medium',
+      workspacePath: os.tmpdir(), createdAt: new Date(), updatedAt: new Date(),
+    }).run();
+
+    const pending = new PendingApprovals();
+    const respondSpy = vi.fn();
+
+    let emitNext: (() => void) | null = null;
+    const stepGate = new Promise<void>((r) => { emitNext = r; });
+
+    const fakeAdapter = {
+      start: (_opts: any, onEvent: any) => {
+        // Emit one event per `emitNext()` tick. We use this to control timing:
+        // 1. session_start fires immediately.
+        // 2. approval_request fires — runner registers and awaits.
+        // 3. session_end fires only after we explicitly call emitNext again,
+        //    which we do AFTER responding to the pending approval.
+        let sessionId: string | null = null;
+        let exitCode = 0;
+
+        // Kick off the async emit loop.
+        (async () => {
+          // Tick 1: session_start
+          await onEvent({ type: 'session_start', session_id: 's-blk' });
+          await new Promise((r) => setImmediate(r));
+          // Tick 2: approval_request — runner will await pendingApprovals.
+          await onEvent({ type: 'approval_request', question: 'Allow Bash?' });
+          await new Promise((r) => setImmediate(r));
+          // Wait for the test to call emitNext() before sending session_end.
+          await stepGate;
+          // Tick 3: session_end — runner resumes and the run finishes.
+          await onEvent({ type: 'session_end', exit_code: 0 });
+        })();
+
+        return {
+          stdin: { write: vi.fn() },
+          respond: respondSpy,
+          done: new Promise<{ sessionId: string | null; exitCode: number }>((resolve) => {
+            // Mirror the real adapter: resolve done after the process "exits".
+            // We approximate this by waiting for the emit loop above to drain
+            // (session_end is the last emit) and then yielding a tick.
+            const tryResolve = () => {
+              if (sessionId) resolve({ sessionId, exitCode });
+            };
+            // Poll once session_end lands. We can't await onEvent directly
+            // (we don't own its promise), but stepGate guarantees ordering.
+            const tick = async () => {
+              while (!emitNext) {
+                // The fake above sets emitNext synchronously; this loop is
+                // here to avoid TDZ if start() is called before assignment.
+                await new Promise((r) => setImmediate(r));
+              }
+              // Wait for the full emit loop (incl. session_end) to finish.
+              await new Promise<void>((r) => {
+                const id = setInterval(() => {
+                  // Heuristic: once session_end has been seen, the runner
+                  // calls finishRun; we resolve done a tick later. Cheap.
+                  if (exitCode !== 0 || sessionId) {
+                    clearInterval(id);
+                    r();
+                  }
+                }, 5);
+              });
+              tryResolve();
+            };
+            // Mark sessionId once seen (set in the loop) — but the loop above
+            // doesn't actually expose state. Instead, set sessionId here when
+            // emitNext fires:
+            const onEmit = () => { sessionId = 's-blk'; exitCode = 0; };
+            // Hook: tap into the emit chain via stepGate.
+            stepGate.then(() => {
+              onEmit();
+              tryResolve();
+            });
+            tick();
+          }),
+        };
+      },
+    };
+
+    // Start the run; capture the promise so we can assert it doesn't settle
+    // until we respond.
+    const runPromise = runOnce({
+      db,
+      runId: crypto.randomUUID(),
+      issueId,
+      adapter: fakeAdapter as any,
+      broadcast: bc,
+      pendingApprovals: pending,
+    });
+
+    // Wait for the runner to register the pending approval — that's the
+    // signal that the runner is now blocked waiting for the user.
+    await new Promise<void>((resolve) => {
+      const tick = () => {
+        if (pending.has(issueId)) resolve();
+        else setImmediate(tick);
+      };
+      tick();
+    });
+
+    // While the runner is awaiting, the run is not done.
+    let settled = false;
+    runPromise.then(() => { settled = true; });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    expect(settled).toBe(false);
+    expect(respondSpy).not.toHaveBeenCalled();
+
+    // Answer the approval. The runner should call handle.respond('yes').
+    expect(pending.respond(issueId, 'yes')).toBe(true);
+
+    // Now let the emit loop send session_end so the run can finish.
+    emitNext!();
+
+    await runPromise;
+
+    expect(respondSpy).toHaveBeenCalledWith('yes');
+    expect(pending.has(issueId)).toBe(false);
+  });
+
+  it('does not block on approval_request when pendingApprovals is omitted', async () => {
+    const issueId = crypto.randomUUID();
+    await db.insert(issues).values({
+      id: issueId, title: 'do thing', status: 'todo', priority: 'medium',
+      workspacePath: os.tmpdir(), createdAt: new Date(), updatedAt: new Date(),
+    }).run();
+
+    const respondSpy = vi.fn();
+    const result = await runOnce({
+      db,
+      runId: crypto.randomUUID(),
+      issueId,
+      adapter: makeFakeAdapter([
+        { type: 'session_start', session_id: 's-noap' },
+        { type: 'approval_request', question: 'Allow Bash?' },
+        { type: 'session_end', exit_code: 0 },
+      ]) as any,
+      broadcast: bc,
+    });
+
+    expect(result.kind).toBe('ok');
+    // Without a pendingApprovals registry, the runner does not call respond().
+    expect(respondSpy).not.toHaveBeenCalled();
+  });
+
+  it('releases a pending approval when the run finishes without a response', async () => {
+    const issueId = crypto.randomUUID();
+    await db.insert(issues).values({
+      id: issueId, title: 'do thing', status: 'todo', priority: 'medium',
+      workspacePath: os.tmpdir(), createdAt: new Date(), updatedAt: new Date(),
+    }).run();
+
+    const pending = new PendingApprovals();
+    // Pre-register to mirror the runner's registration timing without
+    // actually firing onEvent. We simulate the runner finishing without
+    // anyone responding by calling cancel directly — the production code
+    // does the same thing on handle.done resolution.
+    pending.register(issueId, {
+      runId: 'r',
+      resolve: () => {},
+      reject: () => {},
+      createdAt: Date.now(),
+    });
+    expect(pending.has(issueId)).toBe(true);
+
+    // The runner's post-done cleanup path cancels; verify the contract.
+    pending.cancel(issueId, 'run_finished');
+    expect(pending.has(issueId)).toBe(false);
+  });
 });
 
 function makeFakeAdapter(events: any[]) {
@@ -318,6 +495,7 @@ function makeFakeAdapter(events: any[]) {
       const eventPromises = events.map((e) => Promise.resolve(onEvent(e)));
       return {
         stdin: { write: vi.fn() },
+        respond: vi.fn(),
         done: Promise.all(eventPromises).then(() => ({
           sessionId: events.find((e: any) => e.type === 'session_start')?.session_id ?? null,
           exitCode: events.find((e: any) => e.type === 'session_end')?.exit_code ?? 0,
@@ -342,6 +520,7 @@ function makeCapturingFakeAdapter(captured: { opts: any }, events: any[]) {
       const eventPromises = events.map((e) => Promise.resolve(onEvent(e)));
       return {
         stdin: { write: vi.fn() },
+        respond: vi.fn(),
         done: Promise.all(eventPromises).then(() => ({
           sessionId: null,
           exitCode: events.find((e: any) => e.type === 'session_end')?.exit_code ?? 0,

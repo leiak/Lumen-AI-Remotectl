@@ -46,7 +46,12 @@ export const runEvents = sqliteTable('run_events', {
 export const pushDevices = sqliteTable('push_devices', {
   id: text('id').primaryKey(),
   deviceToken: text('device_token').notNull().unique(),
-  platform: text('platform', { enum: ['ios', 'android'] }).notNull(),
+  platform: text('platform', { enum: ['ios', 'android', 'web'] }).notNull(),
+  // Web Push subscription fields (nullable so iOS/Android rows still fit).
+  // For web rows, deviceToken == subscription.endpoint and these carry the
+  // p256dh + auth keys needed by web-push to encrypt the payload.
+  p256dh: text('p256dh'),
+  auth: text('auth'),
   lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }).notNull(),
 });
 
@@ -54,4 +59,14 @@ export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }),
+});
+
+// Append-only log of every broadcast event the server has emitted. Used to
+// replay missed events to a reconnecting WS client via `?since=<id>`. The
+// autoincrement `id` is the monotonic event_id the client tracks in storage.
+export const broadcastLog = sqliteTable('broadcast_log', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  eventType: text('event_type').notNull(),
+  payload: text('payload').notNull(), // JSON-encoded BroadcastEvent
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 });

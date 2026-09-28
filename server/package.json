@@ -10,7 +10,12 @@
     "./db/migrate": "./dist/db/migrate.js",
     "./db/schema": "./dist/db/schema.js",
     "./auth": "./dist/auth.js",
-    "./ws/broadcast": "./dist/ws/broadcast.js"
+    "./ws/broadcast": "./dist/ws/broadcast.js",
+    "./events/translate": "./dist/events/translate.js",
+    "./adapter/claude": "./dist/adapter/claude.js",
+    "./scheduler/runner": "./dist/scheduler/runner.js",
+    "./scheduler/pending": "./dist/scheduler/pending.js",
+    "./push/notify": "./dist/push/notify.js"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -23,13 +28,15 @@
     "@libsql/client": "^0.14.0",
     "drizzle-orm": "^0.36.0",
     "express": "^5.0.0",
+    "web-push": "^3.6.7",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
-    "@types/ws": "^8.5.0",
     "@types/supertest": "^6.0.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.5.0",
     "supertest": "^7.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

@@ -29,13 +29,12 @@ async function bootApp(apiKey = 'sk-test-abc') {
   const dbPath = freshDbPath('boot');
   const db = createDb(dbPath);
   await migrate(db);
-  const hub = new BroadcastHub();
+  const hub = new BroadcastHub(db);
   const app = await createApp({
     db,
     apiKey,
     hub,
     httpPort: 0,
-    wsPort: 0,
   });
   return { app, dbPath, db, hub };
 }
@@ -60,21 +59,19 @@ describe('bootstrap', () => {
     dbPathHolder = dbPath;
     const db = createDb(dbPath);
     await migrate(db);
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
 
     const app = await createApp({
       db,
       apiKey: 'sk-test-abc',
       hub,
       httpPort: 0,
-      wsPort: 0,
     });
 
     cleanup = app.shutdown;
 
     expect(app.httpPort).toBeGreaterThan(0);
-    expect(app.wsPort).toBeGreaterThan(0);
-    expect(app.httpPort).not.toBe(app.wsPort);
+    expect(app.wsPort).toBe(app.httpPort);
   });
 
   it('returns 401 on unauthenticated REST call', async () => {
@@ -82,14 +79,13 @@ describe('bootstrap', () => {
     dbPathHolder = dbPath;
     const db = createDb(dbPath);
     await migrate(db);
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
 
     const app = await createApp({
       db,
       apiKey: 'sk-test-abc',
       hub,
       httpPort: 0,
-      wsPort: 0,
     });
 
     cleanup = app.shutdown;
@@ -153,13 +149,12 @@ describe('bootstrap', () => {
     dbPathHolder = dbPath;
     const db = createDb(dbPath);
     await migrate(db);
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const app = await createApp({
       db,
       apiKey: 'sk-test-abc',
       hub,
       httpPort: 0,
-      wsPort: 0,
     });
     cleanup = app.shutdown;
 

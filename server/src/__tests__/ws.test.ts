@@ -1,5 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import { createDb } from '../db/client.js';
+import { migrate } from '../db/migrate.js';
 import { createWsServer } from '../ws/server.js';
 import { BroadcastHub } from '../ws/broadcast.js';
 
@@ -7,16 +12,30 @@ const TOKEN = 'sk-test';
 
 describe('WS server', () => {
   let cleanup: (() => void) | null = null;
+  let dbPath: string;
+  let db: ReturnType<typeof createDb>;
+
+  beforeEach(async () => {
+    dbPath = path.join(
+      os.tmpdir(),
+      `ws-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
+    );
+    db = createDb(dbPath);
+    await migrate(db);
+  });
 
   afterEach(() => {
     if (cleanup) {
       cleanup();
       cleanup = null;
     }
+    try { fs.unlinkSync(dbPath); } catch {}
+    try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+    try { fs.unlinkSync(dbPath + '-shm'); } catch {}
   });
 
   it('rejects connection without bearer token', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
     await new Promise<void>((resolve, reject) => {
@@ -27,7 +46,7 @@ describe('WS server', () => {
   });
 
   it('rejects connection with invalid token', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
     await new Promise<void>((resolve, reject) => {
@@ -40,7 +59,7 @@ describe('WS server', () => {
   });
 
   it('rejects malformed Authorization header (wrong scheme)', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
     await new Promise<void>((resolve, reject) => {
@@ -53,7 +72,7 @@ describe('WS server', () => {
   });
 
   it('rejects empty token after Bearer', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
     await new Promise<void>((resolve, reject) => {
@@ -66,7 +85,7 @@ describe('WS server', () => {
   });
 
   it('treats lowercase "bearer" as malformed (case-sensitive Bearer required)', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
     await new Promise<void>((resolve, reject) => {
@@ -79,7 +98,7 @@ describe('WS server', () => {
   });
 
   it('accepts token via query string and receives broadcasts (browser fallback)', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
 
@@ -107,7 +126,7 @@ describe('WS server', () => {
   });
 
   it('rejects connection with invalid token via query string', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
     await new Promise<void>((resolve, reject) => {
@@ -118,7 +137,7 @@ describe('WS server', () => {
   });
 
   it('accepts token via query string when URL has a non-root path', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
 
@@ -144,7 +163,7 @@ describe('WS server', () => {
   });
 
   it('accepts connection with valid token and receives broadcasts (deterministic)', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
 
@@ -171,7 +190,7 @@ describe('WS server', () => {
   });
 
   it('delivers same broadcast to multiple subscribers', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = close;
 
@@ -202,7 +221,7 @@ describe('WS server', () => {
   });
 
   it('close() drains outstanding sockets before resolving', async () => {
-    const hub = new BroadcastHub();
+    const hub = new BroadcastHub(db);
     const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
     cleanup = () => {}; // close already invoked explicitly
 
@@ -225,25 +244,136 @@ describe('WS server', () => {
 
 describe('WS server bind error handling', () => {
   let cleanup: (() => void) | null = null;
+  let dbPath: string;
+  let db: ReturnType<typeof createDb>;
+
+  beforeEach(async () => {
+    dbPath = path.join(
+      os.tmpdir(),
+      `ws-bind-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
+    );
+    db = createDb(dbPath);
+    await migrate(db);
+  });
 
   afterEach(() => {
     if (cleanup) {
       cleanup();
       cleanup = null;
     }
+    try { fs.unlinkSync(dbPath); } catch {}
+    try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+    try { fs.unlinkSync(dbPath + '-shm'); } catch {}
   });
 
   it('rejects with EADDRINUSE when port is already bound', async () => {
     // First server binds to a real (non-zero) port
-    const hubA = new BroadcastHub();
+    const hubA = new BroadcastHub(db);
     const a = await createWsServer({ port: 0, apiKey: TOKEN, hub: hubA });
     cleanup = a.close;
 
-    const hubB = new BroadcastHub();
+    const hubB = new BroadcastHub(db);
     // Second server attempts to bind to the same port
     await expect(
       createWsServer({ port: a.port, apiKey: TOKEN, hub: hubB }),
     ).rejects.toThrow();
+  });
+});
+
+describe('BroadcastHub replay', () => {
+  let dbPath: string;
+  let db: ReturnType<typeof createDb>;
+
+  beforeEach(async () => {
+    dbPath = path.join(
+      os.tmpdir(),
+      `ws-replay-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
+    );
+    db = createDb(dbPath);
+    await migrate(db);
+  });
+
+  afterEach(() => {
+    try { fs.unlinkSync(dbPath); } catch {}
+    try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+    try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+  });
+
+  it('replaySince() returns events with id > since in order', async () => {
+    const hub = new BroadcastHub(db);
+
+    await hub.broadcast({ type: 'issue_updated', issueId: 'i-1', status: 'todo' });
+    await hub.broadcast({ type: 'issue_updated', issueId: 'i-2', status: 'in_progress' });
+    await hub.broadcast({ type: 'run_started', runId: 'r-1', issueId: 'i-1' });
+
+    const after = await hub.replaySince(0);
+    expect(after).toHaveLength(3);
+    expect(after[0]!.event_id).toBeLessThan(after[1]!.event_id);
+    expect(after[1]!.event_id).toBeLessThan(after[2]!.event_id);
+    expect(after[0]!.event.type).toBe('issue_updated');
+    expect(after[1]!.event).toMatchObject({ type: 'issue_updated', issueId: 'i-2' });
+    expect(after[2]!.event.type).toBe('run_started');
+  });
+
+  it('replaySince(N) excludes events with id <= N', async () => {
+    const hub = new BroadcastHub(db);
+
+    await hub.broadcast({ type: 'issue_updated', issueId: 'i-1', status: 'todo' });
+    await hub.broadcast({ type: 'issue_updated', issueId: 'i-2', status: 'in_progress' });
+    await hub.broadcast({ type: 'run_started', runId: 'r-1', issueId: 'i-1' });
+
+    const all = await hub.replaySince(0);
+    const after2 = await hub.replaySince(all[1]!.event_id);
+
+    expect(after2).toHaveLength(1);
+    expect(after2[0]!.event).toMatchObject({ type: 'run_started', runId: 'r-1' });
+  });
+
+  it('replaySince(N) with N at the high-water mark returns []', async () => {
+    const hub = new BroadcastHub(db);
+    await hub.broadcast({ type: 'issue_updated', issueId: 'i-1', status: 'todo' });
+
+    const all = await hub.replaySince(0);
+    const after = await hub.replaySince(all[0]!.event_id);
+    expect(after).toEqual([]);
+  });
+
+  it('live WS upgrade replays missed events via ?since=<id>', async () => {
+    const hub = new BroadcastHub(db);
+    await hub.broadcast({ type: 'issue_updated', issueId: 'i-1', status: 'todo' });
+    await hub.broadcast({ type: 'issue_updated', issueId: 'i-2', status: 'in_progress' });
+
+    const snapshot = await hub.replaySince(0);
+    const since = snapshot[0]!.event_id; // we already saw the first event
+
+    const { port, close } = await createWsServer({ port: 0, apiKey: TOKEN, hub });
+    try {
+      // Attach the 'message' listener BEFORE waiting for 'open' — replay
+      // messages arrive on the same tick the server processes the upgrade,
+      // which can race with the client emitting 'open'. A late listener
+      // would drop the first frame.
+      const received: string[] = [];
+      const ws = await openAuthorizedSince(port, TOKEN, since, (sock) => {
+        sock.on('message', (data) => received.push(data.toString()));
+      });
+
+      // Only the second event (id > since) should be replayed.
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (received.length >= 1) resolve();
+          else setImmediate(check);
+        };
+        check();
+      });
+
+      expect(received).toHaveLength(1);
+      const parsed = JSON.parse(received[0]!);
+      expect(parsed.event_id).toBe(snapshot[1]!.event_id);
+      expect(parsed.event).toMatchObject({ type: 'issue_updated', issueId: 'i-2' });
+      ws.close();
+    } finally {
+      await close();
+    }
   });
 });
 
@@ -282,6 +412,30 @@ function openAuthorizedQueryPath(port: number, path: string, token: string): Pro
     const ws = new WebSocket(
       `ws://127.0.0.1:${port}${path}?token=${encodeURIComponent(token)}`,
     );
+    ws.once('error', (err) => reject(err));
+    ws.once('open', () => resolve(ws));
+  });
+}
+
+/**
+ * Helper: opens a WS connection authorized via query string and passes
+ * `?since=<id>` so the server replays missed events after the upgrade.
+ *
+ * Accepts an `onAttach` callback that runs BEFORE the 'open' wait resolves,
+ * so callers can register message listeners in time to catch replay frames
+ * that fire on the same tick as the upgrade.
+ */
+function openAuthorizedSince(
+  port: number,
+  token: string,
+  since: number,
+  onAttach: (ws: WebSocket) => void,
+): Promise<WebSocket> {
+  return new Promise<WebSocket>((resolve, reject) => {
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${port}/?token=${encodeURIComponent(token)}&since=${since}`,
+    );
+    onAttach(ws);
     ws.once('error', (err) => reject(err));
     ws.once('open', () => resolve(ws));
   });

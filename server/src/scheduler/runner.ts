@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { issues, runs, runEvents, comments } from '../db/schema.js';
-import { ClaudeAdapter, type ClaudeEvent } from '../adapter/claude.js';
+import { ClaudeAdapter, type ClaudeEvent, type ClaudeHandle } from '../adapter/claude.js';
 import { claimNextRun, finishRun } from './heartbeat.js';
+import { PendingApprovals } from './pending.js';
 import type { RouteEvent } from '../events/translate.js';
 import type { NotifyKind, NotifyPayload } from '../push/notify.js';
 import crypto from 'node:crypto';
@@ -24,6 +25,13 @@ export interface RunOnceOpts {
    * caller so it never breaks the run flow.
    */
   notify?: (kind: NotifyKind, payload: NotifyPayload) => Promise<void>;
+  /**
+   * Registry of in-flight approval requests. The runner registers when it sees
+   * an `approval_request` event and awaits the user's yes/no before continuing.
+   * If omitted, the runner still records/broadcasts the request but doesn't
+   * block on it (useful for tests that don't care about approval plumbing).
+   */
+  pendingApprovals?: PendingApprovals;
 }
 
 export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
@@ -52,7 +60,7 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
 
   opts.broadcast({ kind: 'run.started', runId: opts.runId, issueId: opts.issueId });
 
-  let handle: { stdin: { write: (s: string) => void }; done: Promise<{ sessionId: string | null; exitCode: number }> };
+  let handle: ClaudeHandle;
   try {
     // Resume if there's a currentSessionId; otherwise fresh.
     const adapterOpts = issue.currentSessionId
@@ -97,6 +105,29 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
             console.error('push notify failed', { kind: 'approval_required', runId: opts.runId, err: e });
           }
         }
+
+        // If a PendingApprovals registry is wired in, await the user's
+        // response before letting the runner return from this event. The
+        // HTTP route resolves the pending promise when an `approval_response`
+        // comment arrives; on rejection (e.g. run cancelled) we propagate.
+        if (opts.pendingApprovals) {
+          try {
+            const response = await new Promise<'yes' | 'no'>((resolve, reject) => {
+              opts.pendingApprovals!.register(opts.issueId, {
+                runId: opts.runId,
+                resolve,
+                reject,
+                createdAt: Date.now(),
+              });
+            });
+            handle.respond(response);
+          } catch (e) {
+            console.error('approval await failed:', { issueId: opts.issueId, err: e });
+            // Don't rethrow — surfacing the error would crash the adapter's
+            // onEvent pipeline. The run continues; the user's intent is lost
+            // but no crash.
+          }
+        }
         return;
       }
 
@@ -121,6 +152,12 @@ export async function runOnce(opts: RunOnceOpts): Promise<RunResult> {
   }
 
   const { sessionId, exitCode } = await handle.done;
+
+  // If the run ended while a response was still pending, release it so the
+  // HTTP route doesn't hang on a Promise nobody will ever resolve.
+  if (opts.pendingApprovals) {
+    opts.pendingApprovals.cancel(opts.issueId, 'run_finished');
+  }
 
   // Persist session_id BEFORE finishRun so the next resume works (see heartbeat plan deviation).
   if (sessionId) {
@@ -155,6 +192,11 @@ export interface StartLoopOpts {
    * the run flow.
    */
   notify?: (kind: NotifyKind, payload: NotifyPayload) => Promise<void>;
+  /**
+   * Forwarded to each `runOnce` so approval_request events can pause the
+   * runner until the user responds.
+   */
+  pendingApprovals?: PendingApprovals;
 }
 
 /**
@@ -179,6 +221,7 @@ export function startLoop(opts: StartLoopOpts): () => void {
         adapter: opts.adapter,
         broadcast: opts.broadcast,
         notify: opts.notify,
+        pendingApprovals: opts.pendingApprovals,
       });
     } catch (e) {
       console.error('loop tick failed:', e);

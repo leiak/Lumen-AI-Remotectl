@@ -9,16 +9,17 @@ import { createDb } from '../db/client.js';
 import { migrate } from '../db/migrate.js';
 import { issues, comments, runs } from '../db/schema.js';
 import { issuesRouter } from '../routes/issues.js';
+import { PendingApprovals } from '../scheduler/pending.js';
 
 const TOKEN = 'sk-test';
 
-async function setupApp() {
+async function setupApp(opts: { pendingApprovals?: PendingApprovals } = {}) {
   const dbPath = path.join(os.tmpdir(), `routes-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
   const db = createDb(dbPath);
   await migrate(db);
   const app = express();
   app.use(express.json());
-  app.use('/api/issues', issuesRouter(db, TOKEN));
+  app.use('/api/issues', issuesRouter(db, TOKEN, undefined, opts.pendingApprovals));
   return { app, db, dbPath };
 }
 
@@ -383,5 +384,266 @@ describe('issues routes', () => {
       try { fs.unlinkSync(ctx.dbPath + '-wal'); } catch {}
       try { fs.unlinkSync(ctx.dbPath + '-shm'); } catch {}
     }
+  });
+});
+
+describe('approval response wiring (route → pendingApprovals)', () => {
+  let dbPath: string;
+  let db: ReturnType<typeof createDb>;
+  let pending: PendingApprovals;
+  let app: ReturnType<typeof express>;
+
+  beforeEach(async () => {
+    const ctx = await setupApp();
+    dbPath = ctx.dbPath;
+    db = ctx.db;
+    pending = new PendingApprovals();
+    app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN, undefined, pending));
+  });
+
+  afterEach(() => {
+    try { fs.unlinkSync(dbPath); } catch {}
+    try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+    try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+  });
+
+  it('POST /comments body="yes" resolves the pending approval with "yes"', async () => {
+    const issue = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'i', workspacePath: '/x' });
+    const issueId = issue.body.id as string;
+
+    let resolved: 'yes' | 'no' | null = null;
+    pending.register(issueId, {
+      runId: 'r1',
+      resolve: (v) => { resolved = v; },
+      reject: () => {},
+      createdAt: Date.now(),
+    });
+
+    const res = await request(app)
+      .post(`/api/issues/${issueId}/comments`)
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ body: 'yes' });
+    expect(res.status).toBe(201);
+    expect(res.body.kind).toBe('approval_response');
+    expect(resolved).toBe('yes');
+    expect(pending.has(issueId)).toBe(false);
+  });
+
+  it('POST /comments body="no" resolves with "no"', async () => {
+    const issue = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'i', workspacePath: '/x' });
+    const issueId = issue.body.id as string;
+
+    let resolved: 'yes' | 'no' | null = null;
+    pending.register(issueId, {
+      runId: 'r1',
+      resolve: (v) => { resolved = v; },
+      reject: () => {},
+      createdAt: Date.now(),
+    });
+
+    await request(app)
+      .post(`/api/issues/${issueId}/comments`)
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ body: 'no' });
+    expect(resolved).toBe('no');
+    expect(pending.has(issueId)).toBe(false);
+  });
+
+  it('approval_response without a pending entry still records the comment (no-op resolve)', async () => {
+    const issue = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'i', workspacePath: '/x' });
+    const issueId = issue.body.id as string;
+
+    // No registration — simulates Claude having already finished.
+    const res = await request(app)
+      .post(`/api/issues/${issueId}/comments`)
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ body: 'yes' });
+    expect(res.status).toBe(201);
+    expect(res.body.kind).toBe('approval_response');
+
+    const cs = await db.select().from(comments).where(eq(comments.issueId, issueId)).all();
+    expect(cs.filter((c) => c.kind === 'approval_response')).toHaveLength(1);
+  });
+
+  it('regular comment ("continue") does not touch the pending registry', async () => {
+    const issue = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'i', workspacePath: '/x' });
+    const issueId = issue.body.id as string;
+
+    let touched = false;
+    pending.register(issueId, {
+      runId: 'r1',
+      resolve: () => { touched = true; },
+      reject: () => {},
+      createdAt: Date.now(),
+    });
+
+    await request(app)
+      .post(`/api/issues/${issueId}/comments`)
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ body: 'continue' });
+    expect(touched).toBe(false);
+    expect(pending.has(issueId)).toBe(true); // untouched
+  });
+});
+
+describe('DELETE /api/issues/:id/comments/:commentId', () => {
+  let dbPath: string;
+  let db: ReturnType<typeof createDb>;
+
+  beforeEach(async () => {
+    const ctx = await setupApp();
+    dbPath = ctx.dbPath;
+    db = ctx.db;
+  });
+
+  afterEach(() => {
+    try { fs.unlinkSync(dbPath); } catch {}
+    try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+    try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+  });
+
+  it('removes a user-authored comment and broadcasts comment.deleted', async () => {
+    const broadcasted: any[] = [];
+    const bc = (m: any) => broadcasted.push(m);
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN, bc));
+
+    const issue = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'i', workspacePath: '/x' });
+    const issueId = issue.body.id;
+
+    const c = await request(app)
+      .post(`/api/issues/${issueId}/comments`)
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ body: 'oops typo' });
+    const commentId = c.body.id;
+
+    const res = await request(app)
+      .delete(`/api/issues/${issueId}/comments/${commentId}`)
+      .set('Authorization', `Bearer ${TOKEN}`);
+    expect(res.status).toBe(204);
+
+    const rows = await db.select().from(comments).where(eq(comments.id, commentId)).all();
+    expect(rows).toHaveLength(0);
+
+    const ev = broadcasted.find((b) => b.kind === 'comment.deleted');
+    expect(ev).toBeDefined();
+    expect(ev.issueId).toBe(issueId);
+    expect(ev.commentId).toBe(commentId);
+  });
+
+  it('returns 404 when the comment does not exist', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN));
+
+    const issue = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'i', workspacePath: '/x' });
+
+    const res = await request(app)
+      .delete(`/api/issues/${issue.body.id}/comments/does-not-exist`)
+      .set('Authorization', `Bearer ${TOKEN}`);
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('comment_not_found');
+  });
+
+  it('returns 403 when trying to delete an assistant-authored comment', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN));
+
+    const issue = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'i', workspacePath: '/x' });
+    const issueId = issue.body.id;
+
+    // Insert an agent row directly — only `user` comments can be deleted.
+    const agentId = crypto.randomUUID();
+    await db.insert(comments).values({
+      id: agentId,
+      issueId,
+      authorType: 'assistant',
+      body: 'I am the agent',
+      kind: 'message',
+      createdAt: new Date(),
+    }).run();
+
+    const res = await request(app)
+      .delete(`/api/issues/${issueId}/comments/${agentId}`)
+      .set('Authorization', `Bearer ${TOKEN}`);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('comment_not_user_authored');
+
+    const rows = await db.select().from(comments).where(eq(comments.id, agentId)).all();
+    expect(rows).toHaveLength(1); // still there
+  });
+
+  it('returns 404 when the commentId belongs to a different issue', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN));
+
+    const a = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'a', workspacePath: '/x' });
+    const b = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'b', workspacePath: '/x' });
+
+    const c = await request(app)
+      .post(`/api/issues/${a.body.id}/comments`)
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ body: 'belongs to a' });
+
+    // Try to delete a's comment but claim it's under b's URL.
+    const res = await request(app)
+      .delete(`/api/issues/${b.body.id}/comments/${c.body.id}`)
+      .set('Authorization', `Bearer ${TOKEN}`);
+    expect(res.status).toBe(404);
+
+    // The original comment must still exist.
+    const rows = await db.select().from(comments).where(eq(comments.id, c.body.id)).all();
+    expect(rows).toHaveLength(1);
+  });
+
+  it('returns 401 without an Authorization header', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/api/issues', issuesRouter(db, TOKEN));
+
+    const issue = await request(app)
+      .post('/api/issues')
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ title: 'i', workspacePath: '/x' });
+    const c = await request(app)
+      .post(`/api/issues/${issue.body.id}/comments`)
+      .set('Authorization', `Bearer ${TOKEN}`)
+      .send({ body: 'hi' });
+
+    const res = await request(app)
+      .delete(`/api/issues/${issue.body.id}/comments/${c.body.id}`);
+    expect(res.status).toBe(401);
   });
 });

@@ -1,10 +1,15 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import path from 'node:path';
+import fs from 'node:fs';
 import os from 'node:os';
 import { ClaudeAdapter } from '../adapter/claude.js';
 import { spawnFakeClaude, type FakeClaudeHandle } from './fake-claude.js';
 
-const tmp = () => path.join(os.tmpdir(), `test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+const tmp = () => {
+  const p = path.join(os.tmpdir(), `test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  fs.mkdirSync(p, { recursive: true });
+  return p;
+};
 
 describe('ClaudeAdapter', () => {
   let handles: FakeClaudeHandle[] = [];
@@ -63,6 +68,62 @@ describe('ClaudeAdapter', () => {
     expect(typeof handle.stdin.write).toBe('function');
     handle.stdin.write('yes\n');
     await handle.done;
+  });
+
+  it('handle.respond() writes the user response to stdin (interactive-mode hook)', async () => {
+    // Spawn a stub that mirrors every byte it reads on stdin to a side-channel
+    // file (path passed via env). The default fake-claude ignores stdin; this
+    // test needs to see what the adapter flushes so we can assert on the
+    // exact bytes.
+    const logPath = path.join(os.tmpdir(), `respond-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);
+    const stubPath = path.join(os.tmpdir(), `respond-stub-${Date.now()}-${Math.random().toString(36).slice(2)}.cjs`);
+    const stub = `
+const fs = require('fs');
+const log = process.env.SIDE_CHANNEL;
+process.stdin.on('data', (chunk) => { fs.appendFileSync(log, chunk); });
+process.stdout.write(JSON.stringify({type:'session_start',session_id:'s'}) + '\\n');
+process.stdout.write(JSON.stringify({type:'session_end',exit_code:0}) + '\\n');
+setTimeout(() => process.exit(0), 100);
+`;
+    fs.writeFileSync(stubPath, stub);
+    const prevEnv = process.env.SIDE_CHANNEL;
+    process.env.SIDE_CHANNEL = logPath;
+
+    try {
+      const adapter = new ClaudeAdapter({
+        binary: process.execPath,
+        baseArgs: [stubPath],
+        workspacePath: tmp(),
+      });
+      const handle = adapter.start({ fresh: true, prompt: 'hi' }, () => {});
+      handle.respond('yes');
+      handle.respond('no');
+      const { exitCode } = await handle.done;
+      expect(exitCode).toBe(0);
+
+      // Give the OS a tick to flush the side-channel file.
+      await new Promise((r) => setImmediate(r));
+      const written = fs.readFileSync(logPath, 'utf8');
+      expect(written).toBe('yes\nno\n');
+    } finally {
+      if (prevEnv === undefined) delete process.env.SIDE_CHANNEL;
+      else process.env.SIDE_CHANNEL = prevEnv;
+      try { fs.unlinkSync(logPath); } catch {}
+      try { fs.unlinkSync(stubPath); } catch {}
+    }
+  });
+
+  it('handle.respond() is safe to call after the process exits', async () => {
+    const fake = await track(spawnFakeClaude());
+    const adapter = new ClaudeAdapter({
+      binary: process.execPath,
+      baseArgs: [fake.path],
+      workspacePath: tmp(),
+    });
+    const handle = adapter.start({ fresh: true, prompt: 'hi' }, () => {});
+    await handle.done;
+    // Should not throw — stdin is already closed.
+    expect(() => handle.respond('yes')).not.toThrow();
   });
 
   it('surfaces stderr writes as error events', async () => {

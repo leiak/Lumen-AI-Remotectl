@@ -4,11 +4,17 @@ import type { Db } from '../db/client.js';
 import { issues, comments, runs } from '../db/schema.js';
 import { createAuthMiddleware } from '../auth.js';
 import type { RouteEvent } from '../events/translate.js';
+import type { PendingApprovals } from '../scheduler/pending.js';
 
 const ALLOWED_PRIORITIES = ['low', 'medium', 'high'] as const;
 type Priority = typeof ALLOWED_PRIORITIES[number];
 
-export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: RouteEvent) => void): Router {
+export function issuesRouter(
+  db: Db,
+  apiKey: string,
+  broadcast?: (msg: RouteEvent) => void,
+  pendingApprovals?: PendingApprovals,
+): Router {
   const r = Router();
   r.use(createAuthMiddleware(apiKey));
 
@@ -49,6 +55,7 @@ export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: RouteEven
     // Approval reply tokens — must match app/src/api/constants.ts APPROVAL_YES/APPROVAL_NO
     const isApprovalReply = body === 'yes' || body === 'no';
     const kind: 'message' | 'approval_response' = isApprovalReply ? 'approval_response' : 'message';
+    const approvalValue = body === 'yes' ? ('yes' as const) : ('no' as const);
 
     try {
       const result = await db.transaction(async (tx) => {
@@ -97,6 +104,11 @@ export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: RouteEven
       // comment + (optional) run are already committed by the transaction.
       try {
         if (isApprovalReply) {
+          // Forward the response to the awaiting runner. If no approval is
+          // currently pending (e.g. the user tapped twice, or Claude has
+          // already exited) respond() returns false and we silently no-op —
+          // the comment is still recorded for the audit trail.
+          pendingApprovals?.respond(req.params.id, approvalValue);
           broadcast?.({ kind: 'approval.responded', issueId: req.params.id, value: body });
         } else if (result.runId) {
           broadcast?.({ kind: 'run.queued', issueId: req.params.id, runId: result.runId });
@@ -114,6 +126,38 @@ export function issuesRouter(db: Db, apiKey: string, broadcast?: (msg: RouteEven
   r.get('/:id/comments', async (req, res) => {
     const rows = await db.select().from(comments).where(eq(comments.issueId, req.params.id)).orderBy(comments.createdAt).all();
     res.json(rows);
+  });
+
+  // Delete a comment. Used by the mobile UI to remove a user message — the
+  // user-facing case is "I just sent a comment I want to take back". Only
+  // user-authored comments can be deleted; agent / approval_request rows
+  // belong to the run and are immutable.
+  r.delete('/:id/comments/:commentId', async (req, res) => {
+    const { id: issueId, commentId } = req.params;
+    try {
+      const existing = await db
+        .select()
+        .from(comments)
+        .where(eq(comments.id, commentId))
+        .get();
+      if (!existing) return res.status(404).json({ error: 'comment_not_found' });
+      if (existing.issueId !== issueId) {
+        // Defensive: comment IDs are UUIDs so collisions are vanishingly
+        // unlikely, but if they ever happen we want a 404, not a wrong-row
+        // delete.
+        return res.status(404).json({ error: 'comment_not_found' });
+      }
+      if (existing.authorType !== 'user') {
+        return res.status(403).json({ error: 'comment_not_user_authored' });
+      }
+      await db.delete(comments).where(eq(comments.id, commentId)).run();
+      // Broadcast so other connected clients refresh their view.
+      broadcast?.({ kind: 'comment.deleted', issueId, commentId });
+      return res.status(204).end();
+    } catch (e) {
+      console.error('DELETE /api/issues/:id/comments/:commentId failed:', e);
+      return res.status(500).json({ error: 'internal' });
+    }
   });
 
   return r;

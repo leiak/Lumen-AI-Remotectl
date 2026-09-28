@@ -3,13 +3,72 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { pushDevices } from '../db/schema.js';
 import { createAuthMiddleware } from '../auth.js';
+import { getVapidPublicKey } from '../push/notify.js';
 
-const ALLOWED_PLATFORMS = ['ios', 'android'] as const;
+const ALLOWED_PLATFORMS = ['ios', 'android', 'web'] as const;
 type Platform = typeof ALLOWED_PLATFORMS[number];
 
 export function pushRouter(db: Db, apiKey: string): Router {
   const r = Router();
   r.use(createAuthMiddleware(apiKey));
+
+  // Public VAPID key — the app fetches this before calling
+  // pushManager.subscribe(). Same auth gate as the rest of /api/push, but the
+  // value is intentionally non-secret (VAPID public keys are meant to be
+  // shared).
+  r.get('/vapid-public-key', (_req, res) => {
+    const key = getVapidPublicKey();
+    if (!key) return res.status(503).json({ error: 'push_not_initialized' });
+    return res.json({ publicKey: key });
+  });
+
+  // Register a Web Push subscription. Body:
+  //   { endpoint: string, keys: { p256dh: string, auth: string } }
+  // We store the endpoint as deviceToken (unique constraint fits naturally)
+  // and keep p256dh/auth as separate columns for the web-push encryption.
+  r.post('/subscribe', async (req, res) => {
+    const body = req.body as {
+      endpoint?: unknown;
+      keys?: { p256dh?: unknown; auth?: unknown };
+    };
+    if (
+      typeof body.endpoint !== 'string' || !body.endpoint ||
+      !body.keys ||
+      typeof body.keys.p256dh !== 'string' || !body.keys.p256dh ||
+      typeof body.keys.auth !== 'string' || !body.keys.auth
+    ) {
+      return res.status(400).json({ error: 'invalid_subscription' });
+    }
+
+    const now = new Date();
+    const id = crypto.randomUUID();
+    try {
+      await db
+        .insert(pushDevices)
+        .values({
+          id,
+          deviceToken: body.endpoint,
+          platform: 'web',
+          p256dh: body.keys.p256dh,
+          auth: body.keys.auth,
+          lastSeenAt: now,
+        })
+        .onConflictDoUpdate({
+          target: pushDevices.deviceToken,
+          set: {
+            platform: 'web',
+            p256dh: body.keys.p256dh,
+            auth: body.keys.auth,
+            lastSeenAt: now,
+          },
+        })
+        .run();
+      return res.status(200).json({ ok: true });
+    } catch (e) {
+      console.error('POST /api/push/subscribe failed:', e);
+      return res.status(500).json({ error: 'internal' });
+    }
+  });
 
   // Register a device for push notifications.
   // Body: { deviceToken: string, platform: 'ios' | 'android' }
