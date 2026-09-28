@@ -4,6 +4,7 @@ import { useApi } from '../api/context';
 import { fmtError } from '../api/client';
 import { storage } from '../storage';
 import type { IssuePriority } from '../api/types';
+import { toast } from '../components/ConnectionBanner';
 
 const PRIORITIES = ['low', 'medium', 'high'] as const satisfies readonly IssuePriority[];
 
@@ -67,6 +68,7 @@ export function NewIssue() {
       }
     } catch (e) {
       setError(fmtError(e));
+      toast(`Create failed: ${fmtError(e)}`);
       setSubmitting(false);
     }
   }

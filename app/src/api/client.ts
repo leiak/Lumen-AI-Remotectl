@@ -102,4 +102,8 @@ export class ApiClient {
   addComment(issueId: string, input: { body: string }): Promise<Comment> {
     return this.request('POST', `/api/issues/${issueId}/comments`, input);
   }
+
+  deleteComment(issueId: string, commentId: string): Promise<void> {
+    return this.request('DELETE', `/api/issues/${issueId}/comments/${commentId}`);
+  }
 }

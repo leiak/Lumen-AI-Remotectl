@@ -7,14 +7,20 @@ interface WsClientOpts {
 }
 
 /**
- * Build a `ws://host:port/path?token=...` URL from an `http(s)://host:port`
- * base URL and an apiKey. Centralized so the URL shape has one source of truth
- * (avoids fragile `replace(/^http/, 'ws')` tricks that break on `https://`).
+ * Build a `ws://host:port/path?token=...&since=<id>` URL from an
+ * `http(s)://host:port` base URL, an apiKey, and the last seen event id.
+ * Centralized so the URL shape has one source of truth (avoids fragile
+ * `replace(/^http/, 'ws')` tricks that break on `https://`).
+ *
+ * `since` is the high-water mark of event_ids the client has already
+ * rendered; the server replays anything strictly greater on upgrade so
+ * a phone that woke up after a brief disconnect doesn't miss frames.
  */
-function hostWsUrl(host: string, apiKey: string): string {
+function hostWsUrl(host: string, apiKey: string, since: number): string {
   const scheme = host.startsWith('https://') ? 'wss://' : 'ws://';
   const base = host.replace(/^https?:\/\//, '');
-  return `${scheme}${base}/ws?token=${encodeURIComponent(apiKey)}`;
+  const tail = since > 0 ? `&since=${since}` : '';
+  return `${scheme}${base}/ws?token=${encodeURIComponent(apiKey)}${tail}`;
 }
 
 export class WsClient {
@@ -58,27 +64,33 @@ export class WsClient {
     this.stopped = false;
     this.attempt = 0;
 
-    const url = hostWsUrl(host, apiKey);
+    const since = storage.getLastEventId();
+    const url = hostWsUrl(host, apiKey, since);
     const ws = new WebSocket(url);
     this.ws = ws;
 
     ws.onopen = () => {
       this.attempt = 0;
-      // TODO(server-since): server doesn't yet honor `since` — kept for
-      // forward compatibility. Once the server attaches a monotonic
-      // `event_id` to each broadcast and stores a per-connection resume
-      // cursor, this client will automatically resume from the last
-      // seen event on reconnect.
-      ws.send(JSON.stringify({ kind: 'hello', since: storage.getLastEventId() }));
     };
 
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        if (msg && typeof msg === 'object' && typeof msg.event_id === 'number') {
+        // Server wraps every broadcast in `{event_id, event}` (see
+        // server/src/ws/broadcast.ts). Unwrap so handlers receive the inner
+        // payload — they expect a flat BroadcastEvent shape, not an envelope.
+        // `event_id` is tracked separately so the replay cursor advances
+        // correctly even on legacy frames that came in flat.
+        let payload: any = msg;
+        if (msg && typeof msg === 'object' && msg.event && typeof msg.event === 'object') {
+          if (typeof msg.event_id === 'number') {
+            storage.setLastEventId(Math.max(storage.getLastEventId(), msg.event_id));
+          }
+          payload = msg.event;
+        } else if (msg && typeof msg === 'object' && typeof msg.event_id === 'number') {
           storage.setLastEventId(Math.max(storage.getLastEventId(), msg.event_id));
         }
-        for (const h of this.handlers) h(msg);
+        for (const h of this.handlers) h(payload);
       } catch {
         // ignore malformed
       }

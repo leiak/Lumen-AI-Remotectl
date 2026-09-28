@@ -5,10 +5,12 @@ import { LiveStream } from './pages/LiveStream';
 import { NewIssue } from './pages/NewIssue';
 import { Settings } from './pages/Settings';
 import { Stats } from './pages/Stats';
+import { ConnectionBanner, ErrorToast } from './components/ConnectionBanner';
 
 export function App() {
   return (
     <div className="app">
+      <ConnectionBanner />
       <header className="app-header">
         <h1>RemoteCTL</h1>
         <nav>
@@ -29,6 +31,7 @@ export function App() {
           <Route path="*" element={<div className="page"><h2>Not Found</h2><p>No such page.</p></div>} />
         </Routes>
       </main>
+      <ErrorToast />
     </div>
   );
 }

@@ -2,8 +2,12 @@
   "appId": "com.remotectl.app",
   "appName": "RemoteCTL",
   "webDir": "dist",
+  "bundledWebRuntime": false,
   "server": {
     "androidScheme": "https",
     "iosScheme": "https"
+  },
+  "ios": {
+    "contentInset": "automatic"
   }
 }

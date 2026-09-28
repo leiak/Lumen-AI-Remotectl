@@ -2,7 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1115" />
+
+    <!-- PWA manifest. Declares the install metadata used by Android Chrome
+         and other standards-compliant browsers. iOS Safari ignores this and
+         relies on the apple-* tags below. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- iOS "Add to Home Screen" hooks. apple-mobile-web-app-capable turns
+         the page into a standalone web app (no Safari chrome) when launched
+         from the home screen; apple-mobile-web-app-status-bar-style controls
+         the status-bar tint on notched devices. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="RemoteCTL" />
+
+    <!-- iOS uses apple-touch-icon for the home-screen icon. SVG is supported
+         on iOS 18+; for older versions the browser falls back to a generated
+         thumbnail. -->
+    <link rel="apple-touch-icon" href="/icon.svg" />
+
     <title>RemoteCTL</title>
   </head>
   <body>

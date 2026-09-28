@@ -147,6 +147,108 @@ main {
 .comment-user { border-left: 3px solid var(--accent); }
 .comment-assistant { border-left: 3px solid #6b5b95; }
 
+/* Header row inside a comment: holds the author label on the left and the
+   delete button on the right. Keeps the author block-style but lets the
+   × sit on the same line as the label. */
+.comment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.comment-head .author {
+  margin-bottom: 0;
+}
+
+/* Tiny × button on user-authored comments. Hidden until the row is touched so
+   the conversation list stays clean at rest but the delete affordance is one
+   tap away on mobile. */
+.comment-delete {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.comment-delete:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.comment-delete:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.comment-delete:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+/* On a real touch device there's no hover, so surface the × all the time
+   instead of hiding it. Mobile users shouldn't have to discover a hover state. */
+@media (hover: none) {
+  .comment-delete {
+    color: var(--muted);
+    opacity: 0.85;
+  }
+}
+
+/* Inline two-step delete confirmation: when a comment is armed for deletion
+   the × is replaced by a "Delete?" pill + a "Cancel" link. Both buttons
+   stay inside the event loop (no native dialog), so a fast double-tap is
+   always delivered to React even after the first tap. */
+.comment-delete-confirm-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.comment-delete-confirm {
+  background: #d04a4a;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.comment-delete-confirm:active:not(:disabled) {
+  transform: scale(0.95);
+  background: #b83939;
+}
+
+.comment-delete-cancel {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.comment-delete-cancel:active {
+  color: var(--fg);
+}
+
+/* Subtle outline on the pending row so it's visually distinct from
+   siblings while waiting for the second tap. */
+.comment-pending-delete {
+  background: rgba(208, 74, 74, 0.08);
+  border-radius: 8px;
+}
+
 .comment-form textarea {
   width: 100%;
   background: var(--border);
@@ -518,4 +620,275 @@ main {
   font-size: 14px;
   cursor: pointer;
   font-family: inherit;
+}
+
+/* ---------- Inbox toolbar (filter pills, search, sort) ---------- */
+
+.inbox-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.inbox-header h2 { margin: 0; }
+
+.inbox-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inbox-filters {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.filter-pill {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  /* Tap feedback */
+  transition: background-color 0.12s, color 0.12s, transform 0.05s;
+  -webkit-tap-highlight-color: transparent;
+}
+.filter-pill:active { transform: scale(0.97); }
+.filter-pill.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.inbox-toolbar-right {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.inbox-search {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  width: 140px;
+  font-family: inherit;
+}
+.inbox-search:focus { outline: none; border-color: var(--accent); }
+
+.inbox-sort {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.inbox-empty {
+  padding: 32px 16px;
+  text-align: center;
+}
+.inbox-empty p { margin: 4px 0; }
+
+.issue-item a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.issue-item .issue-meta {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ---------- Connection banner + error toast ---------- */
+
+.connection-banner {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  text-align: center;
+  margin-bottom: 12px;
+  border-radius: 6px;
+}
+.connection-banner.offline {
+  background: #4b2a2a;
+  color: #ffd5d5;
+  border: 1px solid #6b3535;
+}
+.connection-banner.reconnecting {
+  background: #4a4220;
+  color: #ffe6a8;
+  border: 1px solid #6b5a30;
+}
+
+.error-toast {
+  position: fixed;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  background: #4b2a2a;
+  color: #ffd5d5;
+  border: 1px solid #6b3535;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 100;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  animation: toast-in 0.18s ease-out;
+}
+@keyframes toast-in {
+  from { transform: translate(-50%, 16px); opacity: 0; }
+  to   { transform: translate(-50%, 0);    opacity: 1; }
+}
+
+/* ---------- LiveStream enhancements ---------- */
+
+.livestream-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.livestream-header h2 { margin: 0; }
+
+.livestream-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.ws-status {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  font-size: 12px;
+}
+.ws-status.connecting  { color: #f0c050; }
+.ws-status.connected   { color: #6fd06f; }
+.ws-status.disconnected{ color: #ff7474; }
+
+button.small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.stream-event {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 0 6px 6px 0;
+}
+.stream-event-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.event-tag {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--border);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.event-tag-assistant { background: #1f3d6b; color: #cfe0ff; }
+.event-tag-result    { background: #1f6b3d; color: #c8f7d6; }
+.event-tag-tool_use  { background: #5a3f1f; color: #ffd9a8; }
+.event-tag-tool_result { background: #3f3f1f; color: #e8e8a8; }
+.event-tag-error     { background: #6b1f1f; color: #ffd5d5; }
+
+.stream-event-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.stream-event-raw {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.stream-empty {
+  padding: 32px 16px;
+  text-align: center;
+}
+.stream-empty p { margin: 4px 0; }
+
+.jump-bottom {
+  position: sticky;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  margin: 12px auto 0;
+  display: block;
+  width: fit-content;
+}
+
+/* ---------- Safe-area insets (iOS PWA) ---------- */
+
+.app {
+  /* Top inset for status-bar overlap, bottom for the home-indicator bar. */
+  padding-top: max(16px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+button {
+  /* Remove the gray flash that iOS Safari shows on tap. */
+  -webkit-tap-highlight-color: transparent;
+  /* Snap press feedback. */
+  transition: transform 0.06s ease-out, opacity 0.06s;
+}
+button:active:not(:disabled) {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
+
+/* ---------- Light mode (system pref) ---------- */
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f8fa;
+    --fg: #1a1d23;
+    --muted: #6a7079;
+    --accent: #2a6df4;
+    --border: #d8dde4;
+  }
+  .stream-event { background: rgba(0, 0, 0, 0.02); }
+  .filter-pill.active { color: #fff; }
+  .stream-event-raw { background: rgba(0, 0, 0, 0.05); }
+  .inbox-search, .inbox-sort { background: #fff; }
 }

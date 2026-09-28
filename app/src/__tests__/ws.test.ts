@@ -79,13 +79,45 @@ describe('App WsClient', () => {
     (globalThis as any).WebSocket = function () { return fakeWs; } as any;
 
     const c = new WsClient();
-    const cb = vi.fn();
     c.onMessage((m) => { captured = m; });
     c.connect();
     fakeWs.onmessage?.({ data: JSON.stringify({ type: 'issue_updated', issueId: 'i-1', status: 'in_progress', event_id: 42 }) });
 
     expect(captured).toEqual({ type: 'issue_updated', issueId: 'i-1', status: 'in_progress', event_id: 42 });
     expect(c.getLastEventId()).toBe(42);
+
+    (globalThis as any).WebSocket = origWS;
+  });
+
+  it('unwraps the server-side {event_id, event} envelope and advances the cursor', () => {
+    storage.setHost('http://127.0.0.1:1');
+    storage.setApiKey('sk-x');
+
+    let captured: any = null;
+    const fakeWs: any = {
+      onopen: null, onclose: null, onerror: null, onmessage: null,
+      send: vi.fn(),
+      close: vi.fn(),
+    };
+    const origWS = (globalThis as any).WebSocket;
+    (globalThis as any).WebSocket = function () { return fakeWs; } as any;
+
+    const c = new WsClient();
+    c.onMessage((m) => { captured = m; });
+    c.connect();
+    // Match the wire shape broadcast.ts sends: { event_id, event: {...} }.
+    fakeWs.onmessage?.({
+      data: JSON.stringify({
+        event_id: 541,
+        event: { type: 'run_event', runId: 'r-1', issueId: 'i-1', content: 'hi' },
+      }),
+    });
+
+    // The handler must receive the inner BroadcastEvent — not the envelope.
+    // `event_id` is consumed for the replay cursor but must NOT leak into
+    // the handler payload.
+    expect(captured).toEqual({ type: 'run_event', runId: 'r-1', issueId: 'i-1', content: 'hi' });
+    expect(c.getLastEventId()).toBe(541);
 
     (globalThis as any).WebSocket = origWS;
   });

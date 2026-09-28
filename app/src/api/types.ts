@@ -26,4 +26,5 @@ export type BroadcastEvent =
   | { type: 'run_event'; runId: string; issueId: string; stream: 'stdout' | 'stderr'; content: string }
   | { type: 'run_finished'; runId: string; issueId: string; status: 'done' | 'failed' | 'cancelled'; error?: string }
   | { type: 'approval_requested'; issueId: string; commentId: string }
-  | { type: 'approval_responded'; issueId: string; value: string };
+  | { type: 'approval_responded'; issueId: string; value: string }
+  | { type: 'comment_deleted'; issueId: string; commentId: string };
