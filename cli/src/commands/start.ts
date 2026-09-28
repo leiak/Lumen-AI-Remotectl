@@ -4,7 +4,11 @@ import { settings } from '@remotectl/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { generateApiKey } from '@remotectl/server/auth';
 import { BroadcastHub } from '@remotectl/server/ws/broadcast';
-import { createApp } from '@remotectl/server';
+import { createApp, broadcastToWs } from '@remotectl/server';
+import { ClaudeAdapter } from '@remotectl/server/adapter/claude';
+import { startLoop } from '@remotectl/server/scheduler/runner';
+import { PendingApprovals } from '@remotectl/server/scheduler/pending';
+import { initPush, notify } from '@remotectl/server/push/notify';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -26,7 +30,7 @@ function parsePort(name: string, fallback: number): number {
 }
 
 const DEFAULT_HTTP_PORT = parsePort('PORT', 8787);
-const DEFAULT_WS_PORT = parsePort('WS_PORT', 8788);
+void parsePort; // keep parsePort referenced for future env-driven config
 
 export async function startCommand() {
   const dbPath = process.env.DB_PATH ?? DEFAULT_DB_PATH;
@@ -76,18 +80,47 @@ export async function startCommand() {
     }
   }
 
-  const hub = new BroadcastHub();
+  // Initialize push BEFORE createApp so the pushRouter's GET /vapid-public-key
+  // is ready the instant the HTTP server starts listening. Generates VAPID
+  // keys on first start, persists them so devices see a stable public key.
+  await initPush(db);
+
+  // Shared registry of pending approval requests. Same instance flows into
+  // both the runner (registers and awaits) and the HTTP route (resolves when
+  // an approval_response comment arrives).
+  const pendingApprovals = new PendingApprovals();
+
+  const hub = new BroadcastHub(db);
   const app = await createApp({
     db,
     apiKey,
     hub,
     httpPort: DEFAULT_HTTP_PORT,
-    wsPort: DEFAULT_WS_PORT,
+    pendingApprovals,
   });
+
+  // Start the Claude runner loop. Issues created via the API get picked up here
+  // and dispatched to the local Claude binary; output is broadcast over WS.
+  const adapter = new ClaudeAdapter({
+    binary: process.env.CLAUDE_BIN ?? 'claude',
+    baseArgs: ['--print', '--output-format', 'stream-json', '--verbose'],
+    workspacePath: process.env.WORKSPACE_PATH ?? os.tmpdir(),
+  });
+  const stopLoop = startLoop({
+    db,
+    adapter,
+    broadcast: (msg) => broadcastToWs(hub, msg),
+    // Runner passes (kind, payload); our notify() needs the db too — bind it
+    // here so the runner signature stays clean.
+    notify: (kind, payload) => notify(db, kind, payload),
+    pendingApprovals,
+  });
+
+  console.log(`  Runner: polling every ${1000}ms`);
 
   console.log(`remotectl server listening`);
   console.log(`  HTTP: http://127.0.0.1:${app.httpPort}`);
-  console.log(`  WS:   ws://127.0.0.1:${app.wsPort}`);
+  console.log(`  WS:   ws://127.0.0.1:${app.httpPort}`);
   if (isFirstStart) {
     console.log(`  Token: ${apiKey}`);
   } else {
@@ -100,6 +133,10 @@ export async function startCommand() {
   const shutdown = async (signal: string) => {
     console.log(`Received ${signal}, shutting down...`);
     try {
+      stopLoop();
+      // Release any in-flight approval awaiters so they don't hang the
+      // shutdown timeout waiting for a response that will never come.
+      pendingApprovals.clear('server_shutdown');
       await Promise.race([
         app.shutdown(),
         new Promise<void>((_, reject) =>
